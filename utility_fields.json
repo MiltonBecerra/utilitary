@@ -1,0 +1,32 @@
+[
+    {
+        "name": "name",
+        "dbType": "string,255",
+        "htmlType": "text",
+        "validations": "required|unique:utilities"
+    },
+    {
+        "name": "slug",
+        "dbType": "string,255",
+        "htmlType": "text",
+        "validations": "required|unique:utilities"
+    },
+    {
+        "name": "description",
+        "dbType": "text",
+        "htmlType": "textarea",
+        "validations": "nullable"
+    },
+    {
+        "name": "icon",
+        "dbType": "string,255",
+        "htmlType": "text",
+        "validations": "nullable"
+    },
+    {
+        "name": "is_active",
+        "dbType": "boolean",
+        "htmlType": "checkbox",
+        "validations": "required"
+    }
+]

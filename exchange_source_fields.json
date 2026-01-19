@@ -1,0 +1,32 @@
+[
+    {
+        "name": "name",
+        "dbType": "string,255",
+        "htmlType": "text",
+        "validations": "required|unique:exchange_sources"
+    },
+    {
+        "name": "url",
+        "dbType": "string,255",
+        "htmlType": "text",
+        "validations": "required"
+    },
+    {
+        "name": "selector_buy",
+        "dbType": "string,255",
+        "htmlType": "text",
+        "validations": "required"
+    },
+    {
+        "name": "selector_sell",
+        "dbType": "string,255",
+        "htmlType": "text",
+        "validations": "required"
+    },
+    {
+        "name": "is_active",
+        "dbType": "boolean",
+        "htmlType": "checkbox",
+        "validations": "required"
+    }
+]

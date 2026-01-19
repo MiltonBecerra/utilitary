@@ -1,0 +1,110 @@
+[
+    {
+        "name": "user_id",
+        "dbType": "integer:unsigned,nullable",
+        "htmlType": "select",
+        "validations": "nullable|exists:users,id",
+        "searchable": false,
+        "fillable": true,
+        "primary": false,
+        "inForm": true,
+        "inIndex": true,
+        "inView": true
+    },
+    {
+        "name": "guest_id",
+        "dbType": "string,255,nullable",
+        "htmlType": "text",
+        "validations": "nullable",
+        "searchable": false,
+        "fillable": true,
+        "primary": false,
+        "inForm": true,
+        "inIndex": true,
+        "inView": true
+    },
+    {
+        "name": "exchange_source_id",
+        "dbType": "integer:unsigned",
+        "htmlType": "select",
+        "validations": "required|exists:exchange_sources,id",
+        "searchable": false,
+        "fillable": true,
+        "primary": false,
+        "inForm": true,
+        "inIndex": true,
+        "inView": true
+    },
+    {
+        "name": "target_price",
+        "dbType": "decimal:10,4",
+        "htmlType": "number",
+        "validations": "required|numeric",
+        "searchable": false,
+        "fillable": true,
+        "primary": false,
+        "inForm": true,
+        "inIndex": true,
+        "inView": true
+    },
+    {
+        "name": "condition",
+        "dbType": "string,20",
+        "htmlType": "select",
+        "validations": "required|in:above,below",
+        "searchable": false,
+        "fillable": true,
+        "primary": false,
+        "inForm": true,
+        "inIndex": true,
+        "inView": true
+    },
+    {
+        "name": "channel",
+        "dbType": "string,20",
+        "htmlType": "select",
+        "validations": "required|in:email,whatsapp",
+        "searchable": false,
+        "fillable": true,
+        "primary": false,
+        "inForm": true,
+        "inIndex": true,
+        "inView": true
+    },
+    {
+        "name": "contact_detail",
+        "dbType": "string,255",
+        "htmlType": "text",
+        "validations": "required",
+        "searchable": false,
+        "fillable": true,
+        "primary": false,
+        "inForm": true,
+        "inIndex": true,
+        "inView": true
+    },
+    {
+        "name": "status",
+        "dbType": "string,20",
+        "htmlType": "select",
+        "validations": "required|in:active,triggered",
+        "searchable": false,
+        "fillable": true,
+        "primary": false,
+        "inForm": true,
+        "inIndex": true,
+        "inView": true
+    },
+    {
+        "name": "frequency",
+        "dbType": "string,20",
+        "htmlType": "select",
+        "validations": "required|in:once,recurring",
+        "searchable": false,
+        "fillable": true,
+        "primary": false,
+        "inForm": true,
+        "inIndex": true,
+        "inView": true
+    }
+]

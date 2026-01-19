@@ -1,0 +1,26 @@
+[
+    {
+        "name": "user_id",
+        "dbType": "integer:unsigned",
+        "htmlType": "select",
+        "validations": "required|exists:users,id"
+    },
+    {
+        "name": "plan_type",
+        "dbType": "string,20",
+        "htmlType": "select",
+        "validations": "required|in:free,basic,pro"
+    },
+    {
+        "name": "starts_at",
+        "dbType": "date",
+        "htmlType": "date",
+        "validations": "required"
+    },
+    {
+        "name": "ends_at",
+        "dbType": "date",
+        "htmlType": "date",
+        "validations": "required"
+    }
+]

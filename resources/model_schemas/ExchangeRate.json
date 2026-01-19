@@ -1,0 +1,62 @@
+[
+    {
+        "name": "exchange_source_id",
+        "dbType": "integer:unsigned",
+        "htmlType": "select",
+        "validations": "required|exists:exchange_sources,id",
+        "searchable": false,
+        "fillable": true,
+        "primary": false,
+        "inForm": true,
+        "inIndex": true,
+        "inView": true
+    },
+    {
+        "name": "buy_price",
+        "dbType": "decimal:10,4",
+        "htmlType": "number",
+        "validations": "required|numeric",
+        "searchable": false,
+        "fillable": true,
+        "primary": false,
+        "inForm": true,
+        "inIndex": true,
+        "inView": true
+    },
+    {
+        "name": "sell_price",
+        "dbType": "decimal:10,4",
+        "htmlType": "number",
+        "validations": "required|numeric",
+        "searchable": false,
+        "fillable": true,
+        "primary": false,
+        "inForm": true,
+        "inIndex": true,
+        "inView": true
+    },
+    {
+        "name": "currency_from",
+        "dbType": "string,3",
+        "htmlType": "text",
+        "validations": "required",
+        "searchable": false,
+        "fillable": true,
+        "primary": false,
+        "inForm": true,
+        "inIndex": true,
+        "inView": true
+    },
+    {
+        "name": "currency_to",
+        "dbType": "string,3",
+        "htmlType": "text",
+        "validations": "required",
+        "searchable": false,
+        "fillable": true,
+        "primary": false,
+        "inForm": true,
+        "inIndex": true,
+        "inView": true
+    }
+]

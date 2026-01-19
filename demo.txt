@@ -1,0 +1,2 @@
+$rates = App\Models\ExchangeRate::with('exchangeSource')->latest()->take(3)->get();
+$rates->map(function($r){ return $r->exchangeSource->name . ': ' . $r->buy_price . ' / ' . $r->sell_price; });

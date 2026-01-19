@@ -1,0 +1,50 @@
+[
+    {
+        "name": "user_id",
+        "dbType": "integer:unsigned",
+        "htmlType": "select",
+        "validations": "required|exists:users,id",
+        "searchable": false,
+        "fillable": true,
+        "primary": false,
+        "inForm": true,
+        "inIndex": true,
+        "inView": true
+    },
+    {
+        "name": "plan_type",
+        "dbType": "string,20",
+        "htmlType": "select",
+        "validations": "required|in:free,basic,pro",
+        "searchable": false,
+        "fillable": true,
+        "primary": false,
+        "inForm": true,
+        "inIndex": true,
+        "inView": true
+    },
+    {
+        "name": "starts_at",
+        "dbType": "date",
+        "htmlType": "date",
+        "validations": "required",
+        "searchable": false,
+        "fillable": true,
+        "primary": false,
+        "inForm": true,
+        "inIndex": true,
+        "inView": true
+    },
+    {
+        "name": "ends_at",
+        "dbType": "date",
+        "htmlType": "date",
+        "validations": "required",
+        "searchable": false,
+        "fillable": true,
+        "primary": false,
+        "inForm": true,
+        "inIndex": true,
+        "inView": true
+    }
+]

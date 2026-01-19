@@ -1,0 +1,32 @@
+[
+    {
+        "name": "exchange_source_id",
+        "dbType": "integer:unsigned",
+        "htmlType": "select",
+        "validations": "required|exists:exchange_sources,id"
+    },
+    {
+        "name": "buy_price",
+        "dbType": "decimal:10,4",
+        "htmlType": "number",
+        "validations": "required|numeric"
+    },
+    {
+        "name": "sell_price",
+        "dbType": "decimal:10,4",
+        "htmlType": "number",
+        "validations": "required|numeric"
+    },
+    {
+        "name": "currency_from",
+        "dbType": "string,3",
+        "htmlType": "text",
+        "validations": "required"
+    },
+    {
+        "name": "currency_to",
+        "dbType": "string,3",
+        "htmlType": "text",
+        "validations": "required"
+    }
+]
