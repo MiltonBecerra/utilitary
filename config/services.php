@@ -30,7 +30,7 @@ return [
         'region' => env('AWS_DEFAULT_REGION', 'us-east-1'),
     ],
 
-    'supermarket_comparator' => [
+'supermarket_comparator' => [
         'plaza_vea_base_url' => env('SMC_PLAZA_VEA_BASE_URL', 'https://www.plazavea.com.pe'),
         'metro_base_url' => env('SMC_METRO_BASE_URL', 'https://www.metro.pe'),
         'wong_base_url' => env('SMC_WONG_BASE_URL', 'https://www.wong.pe'),
@@ -48,5 +48,12 @@ return [
         'rate_limit_per_minute' => (int) env('SMC_RATE_LIMIT_PER_MINUTE', 12),
         'circuit_failure_threshold' => (int) env('SMC_CIRCUIT_FAILURE_THRESHOLD', 3),
         'circuit_cooldown_minutes' => (int) env('SMC_CIRCUIT_COOLDOWN_MINUTES', 10),
+    ],
+
+    'puppeteer' => [
+        'local_api_url' => env('PUPPETEER_LOCAL_API_URL', 'http://localhost:3001'),
+        'timeout' => env('PUPPETEER_TIMEOUT', 30),
+        'enabled' => env('PUPPETEER_ENABLED', true),
+        'api_key' => env('PUPPETEER_API_KEY', 'utilitary-secret-key-2024'),
     ],
 ];

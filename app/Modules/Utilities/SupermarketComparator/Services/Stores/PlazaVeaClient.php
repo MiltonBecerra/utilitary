@@ -87,6 +87,13 @@ class PlazaVeaClient implements StoreClientInterface
         return trim($text);
     }
 
+    private function isDebugQuery(string $query): bool
+    {
+        $needle = $this->normalizeForMatch("Plátano Bizcocho BELL'S pk 10 und");
+        $hay = $this->normalizeForMatch($query);
+        return $needle !== '' && $hay === $needle;
+    }
+
     /**
      * @return string[]
      */
@@ -147,18 +154,28 @@ class PlazaVeaClient implements StoreClientInterface
         $baseUrl = rtrim(config('services.supermarket_comparator.plaza_vea_base_url', 'https://www.plazavea.com.pe'), '/');
         $this->bootstrapSession($baseUrl);
 
+        if ($this->isDebugQuery($query)) {
+            \Log::info('plazavea_debug_query_enter', ['query' => $query, 'base_url' => $baseUrl]);
+        }
+
         $items = $this->fetchSearchJsonItems($query, $baseUrl);
 
         if (empty($items)) {
             $url = $baseUrl . '/search/?_query=' . rawurlencode($query);
             \Log::info('plazavea_search_start', ['query' => $query, 'url' => $url]);
             $finalUrl = $this->resolveSearchUrl($url, $baseUrl);
-            $html = $this->fetchSearchHtml($finalUrl, $baseUrl);
+            if ($this->isDebugQuery($query)) {
+                \Log::info('plazavea_debug_resolve', ['query' => $query, 'start_url' => $url, 'final_url' => $finalUrl]);
+            }
+            $html = $this->fetchSearchHtml($finalUrl, $baseUrl, $query);
             $items = $this->parseSearchHtml($html, $baseUrl);
             if (empty($items)) {
                 $legacyUrl = $baseUrl . '/busca/?ft=' . rawurlencode($query);
+                if ($this->isDebugQuery($query)) {
+                    \Log::info('plazavea_debug_legacy_url', ['query' => $query, 'legacy_url' => $legacyUrl]);
+                }
                 \Log::info('plazavea_search_fallback', ['from' => $finalUrl, 'to' => $legacyUrl]);
-                $legacyHtml = $this->fetchSearchHtml($legacyUrl, $baseUrl);
+                $legacyHtml = $this->fetchSearchHtml($legacyUrl, $baseUrl, $query);
                 $items = $this->parseSearchHtml($legacyHtml, $baseUrl);
             }
         }
@@ -183,6 +200,9 @@ class PlazaVeaClient implements StoreClientInterface
     private function fetchSearchJsonItems(string $query, string $baseUrl): array
     {
         $url = $baseUrl . '/api/io/_v/api/intelligent-search/product_search?query=' . urlencode($query) . '&page=1&count=20';
+        if ($this->isDebugQuery($query)) {
+            \Log::info('plazavea_debug_api_url', ['query' => $query, 'url' => $url]);
+        }
         $requestOptions = $this->sessionOptions($url, 'plazavea_search_api');
         $requestOptions['headers']['Origin'] = $baseUrl;
         $requestOptions['headers']['X-Requested-With'] = 'XMLHttpRequest';
@@ -191,6 +211,10 @@ class PlazaVeaClient implements StoreClientInterface
 
         $response = $this->client->get($url, $requestOptions);
         $status = $response->getStatusCode();
+        if ($this->isDebugQuery($query)) {
+            $bodySnippet = trim(substr((string) $response->getBody(), 0, 200));
+            \Log::info('plazavea_debug_api_status', ['query' => $query, 'status' => $status, 'body_snippet' => $bodySnippet]);
+        }
         \Log::info('plazavea_search_api_status', ['status' => $status, 'url' => $url]);
         if ($status !== 200) {
             return [];
@@ -239,7 +263,7 @@ class PlazaVeaClient implements StoreClientInterface
         return $url;
     }
 
-    private function fetchSearchHtml(string $url, string $baseUrl): string
+    private function fetchSearchHtml(string $url, string $baseUrl, string $query = ''): string
     {
         $requestOptions = $this->sessionOptions($url, 'plazavea_search_html');
         $requestOptions['headers']['Origin'] = $baseUrl;
@@ -250,6 +274,10 @@ class PlazaVeaClient implements StoreClientInterface
         $response = $this->client->get($url, $requestOptions);
         $status = $response->getStatusCode();
         if ($status !== 200) {
+            if ($this->isDebugQuery($query)) {
+                $snippet = trim(substr((string) $response->getBody(), 0, 200));
+                \Log::info('plazavea_debug_html_status', ['query' => $query, 'url' => $url, 'status' => $status, 'body_snippet' => $snippet]);
+            }
             $this->resetSession();
             $this->bootstrapSession($baseUrl);
 

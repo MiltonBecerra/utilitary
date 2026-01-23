@@ -171,6 +171,40 @@ class SupermarketComparatorController extends Controller
         return view('modules.supermarket_comparator.index', $viewData);
     }
 
+    public function retrySearch(Request $request)
+    {
+        $validated = $request->validate([
+            'query' => 'required|string|max:2000',
+            'stores' => 'nullable|array|min:1|max:10',
+            'stores.*' => 'string|max:30',
+        ]);
+
+        if (!Auth::check() && !$this->guestService->hasAcceptedTerms()) {
+            $message = 'Debes aceptar los tÇ¸rminos y la polÇðtica de privacidad para continuar.';
+            return response()->json(['message' => $message], 403);
+        }
+
+        $query = trim((string) $validated['query']);
+        $stores = $validated['stores'] ?? null;
+        $location = '';
+
+        $utility = $this->utility();
+        $plan = $this->resolvePlan($utility);
+        $this->enforceStoreLimits($stores, $plan);
+
+        $result = $this->comparator->phase1Search($query, $location, $stores);
+        $editingPurchase = $this->resolveEditPurchase($request);
+
+        $html = view('modules.supermarket_comparator.partials.result_card', [
+            'result' => $result,
+            'editingPurchase' => $editingPurchase,
+        ])->render();
+
+        return response()->json([
+            'html' => $html,
+        ]);
+    }
+
     /**
      * @return string[]
      */
@@ -613,7 +647,7 @@ class SupermarketComparatorController extends Controller
 
         $limit = match ($plan) {
             'free' => 5,
-            'basic' => 20,
+            'basic' => 1000000,
             'pro' => 50,
             default => 5,
         };

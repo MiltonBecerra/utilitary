@@ -6,6 +6,11 @@
 
 @if (($phase ?? 'start') === 'multi' && !empty($results))
     @foreach ($results as $r)
+        @include('modules.supermarket_comparator.partials.result_card', [
+            'result' => $r,
+            'editingPurchase' => $editingPurchase ?? null,
+        ])
+        @continue
         @php
             $needsRefine = (bool) ($r['needs_refinement'] ?? false);
             $ctx = $r['context_token'] ?? null;

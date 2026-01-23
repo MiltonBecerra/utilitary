@@ -56,6 +56,7 @@ class SupermarketComparatorService
         $ambiguity = $this->ambiguityDetector->analyze($query, $signals);
 
         $errors = [];
+        $errorStoreCodes = [];
         $candidatesByStore = [];
         $promises = [];
         $asyncStores = [];
@@ -106,13 +107,37 @@ class SupermarketComparatorService
                 $asyncStores[$code] = $store;
                 $asyncCacheKeys[$code] = $key;
             } catch (\Throwable $e) {
+                if (empty($retryAttempted[$code])) {
+                    $retryAttempted[$code] = true;
+                    try {
+                        $this->requestGuard->backoffSleepIfNeeded($e->getMessage());
+                        $items = $store->searchWide($query, $location);
+                        $normalized = $this->normalizeCandidates($code, $items);
+                        $deduped = $this->dedupe($normalized);
+                        $candidatesByStore[$code] = $deduped;
+
+                        try {
+                            $this->brandCatalog->updateFromCandidates($code, $deduped);
+                        } catch (\Throwable $e) {
+                            // no-op
+                        }
+
+                        $this->requestGuard->onSuccess($code);
+                        continue;
+                    } catch (\Throwable $retryError) {
+                        $e = $retryError;
+                    }
+                }
+
                 $errors[$store->storeName()] = $e->getMessage();
+                $errorStoreCodes[$code] = true;
                 $candidatesByStore[$code] = [];
                 $this->requestGuard->backoffSleepIfNeeded($e->getMessage());
                 $this->requestGuard->onFailure($code, $e->getMessage());
             }
         }
 
+        $retryAttempted = [];
         foreach ($stores as $store) {
             if ($store instanceof AsyncStoreClientInterface) {
                 continue;
@@ -166,6 +191,7 @@ class SupermarketComparatorService
                 $this->requestGuard->onSuccess($code);
             } catch (\Throwable $e) {
                 $errors[$store->storeName()] = $e->getMessage();
+                $errorStoreCodes[$code] = true;
                 $candidatesByStore[$code] = [];
                 $this->requestGuard->backoffSleepIfNeeded($e->getMessage());
                 $this->requestGuard->onFailure($code, $e->getMessage());
@@ -203,7 +229,30 @@ class SupermarketComparatorService
 
                 $reason = $result['reason'] ?? null;
                 $message = $reason instanceof \Throwable ? $reason->getMessage() : 'Error desconocido';
+                if (empty($retryAttempted[$code])) {
+                    $retryAttempted[$code] = true;
+                    try {
+                        $this->requestGuard->backoffSleepIfNeeded($message);
+                        $items = $store->searchWide($query, $location);
+                        $normalized = $this->normalizeCandidates($code, $items);
+                        $deduped = $this->dedupe($normalized);
+                        $candidatesByStore[$code] = $deduped;
+
+                        try {
+                            $this->brandCatalog->updateFromCandidates($code, $deduped);
+                        } catch (\Throwable $e) {
+                            // no-op
+                        }
+
+                        $this->requestGuard->onSuccess($code);
+                        continue;
+                    } catch (\Throwable $retryError) {
+                        $message = $retryError->getMessage();
+                    }
+                }
+
                 $errors[$store->storeName()] = $message;
+                $errorStoreCodes[$code] = true;
                 $candidatesByStore[$code] = [];
                 $this->requestGuard->backoffSleepIfNeeded($message);
                 $this->requestGuard->onFailure($code, $message);
@@ -233,6 +282,7 @@ class SupermarketComparatorService
             'needs_refinement' => $ambiguity['is_ambiguous'],
             'candidates' => $candidatesByStore,
             'errors' => $errors,
+            'error_store_codes' => array_keys($errorStoreCodes),
         ];
     }
 

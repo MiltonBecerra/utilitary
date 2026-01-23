@@ -18,6 +18,11 @@ class OfferPriceScraperService
     private ?float $htmlPricePublic = null;
     private ?float $htmlPriceCmr = null;
     private array $debugMatches = [];
+    private ?float $oechsleApiCardPrice = null;
+    private bool $sodimacTypedPricesPresent = false;
+    private bool $sodimacTypedCmrMissing = false;
+    private bool $sodimacNextDataPricesPresent = false;
+    private ?string $currentStore = null;
     private ?string $proxyEndpoint;
     private ?string $proxyKey;
     private ProxyRotationService $proxyRotator;
@@ -58,8 +63,59 @@ class OfferPriceScraperService
     public function fetchProduct(string $url): array
     {
         $store = $this->detectStore($url);
+        $this->currentStore = $store;
+        $this->oechsleApiCardPrice = null;
+        $this->htmlPricePublic = null;
+        $this->htmlPriceCmr = null;
+        $this->debugMatches = [];
+        $this->sodimacTypedPricesPresent = false;
+        $this->sodimacTypedCmrMissing = false;
+        $this->sodimacNextDataPricesPresent = false;
         try {
             $html = $this->fetchHtml($url);
+            if ($store === 'promart' && trim($html) !== '') {
+                $dir = storage_path('app/scrape/promart');
+                File::ensureDirectoryExists($dir);
+                $filename = sprintf(
+                    'promart_debug_%s_%s.html',
+                    date('Ymd_His'),
+                    substr(sha1($url), 0, 8)
+                );
+                File::put($dir . DIRECTORY_SEPARATOR . $filename, $html);
+            }
+            if ($store === 'mercado_libre' && trim($html) !== '') {
+                $dir = storage_path('app/scrape/mercado_libre');
+                File::ensureDirectoryExists($dir);
+                $filename = sprintf(
+                    'mercado_libre_debug_%s_%s.html',
+                    date('Ymd_His'),
+                    substr(sha1($url), 0, 8)
+                );
+                File::put($dir . DIRECTORY_SEPARATOR . $filename, $html);
+            }
+            if (
+                $store === 'sodimac' &&
+                $url === 'https://www.sodimac.com.pe/sodimac-pe/articulo/118065399/Pack-x-2-Almohadas-Ventus-Firm-70x50cm/118065400' &&
+                trim($html) !== ''
+            ) {
+                $dir = storage_path('app/scrape/sodimac');
+                File::ensureDirectoryExists($dir);
+                $filename = sprintf(
+                    'sodimac_debug_%s_%s.html',
+                    date('Ymd_His'),
+                    substr(sha1($url), 0, 8)
+                );
+                File::put($dir . DIRECTORY_SEPARATOR . $filename, $html);
+            }
+            if ($store === 'oechsle') {
+                $productId = $this->extractOechsleProductIdFromHtml($html);
+                if (!$productId) {
+                    $productId = $this->extractOechsleProductIdFromUrl($url);
+                }
+                if ($productId) {
+                    $this->oechsleApiCardPrice = $this->fetchOechsleCardPriceFromApi($productId);
+                }
+            }
             $this->extractPricesFromHtml($html);
             // Debug opcional: guardar HTML para inspeccionar sin romper la pГЎgina
             if (config('app.debug')) {
@@ -215,72 +271,74 @@ class OfferPriceScraperService
         return $this->proxyEndpoint . $sep . 'api_key=' . urlencode($this->proxyKey) . '&url=' . urlencode($targetUrl);
     }
 
-    /**
-     * Intenta renderizar la página con Puppeteer (JS). Requiere Node y el script scrape_ripley.js en la raíz.
+/**
+     * Intenta renderizar la página con Puppeteer vía API local.
      */
     private function fetchWithPuppeteer(string $url): ?array
     {
-        $script = base_path('scrape_ripley.js');
-        \Log::info('puppeteer_debug', ['script' => $script, 'exists' => file_exists($script), 'cwd' => getcwd()]);
-        if (!file_exists($script)) {
-            \Log::warning('puppeteer_script_not_found', ['script' => $script]);
-            return null;
-        }
-
         try {
-            // "node" no suele estar en el PATH del usuario de Apache/Windows Service
-            // Usamos path absoluto comun en Windows o fallback
-            $nodePath = 'C:\Program Files\nodejs\node.exe';
-            if (!file_exists($nodePath)) {
-                 $nodePath = 'node'; // Fallback por si está en otro lado
-            }
-
-            $profileBase = storage_path('logs/puppeteer_profiles');
-            File::ensureDirectoryExists($profileBase);
-            $this->cleanupPuppeteerProfiles($profileBase);
+            // URL de tu API local (ajusta según tu configuración)
+            $localApiUrl = config('services.puppeteer.local_api_url', 'http://localhost:3001/scrape/ripley');
             
-            $env = [
-                'PUPPETEER_PROFILE_BASE' => $profileBase,
-                // Aseguramos System32 en PATH para que Puppeteer pueda usar taskkill en Windows
-                'PATH' => (getenv('PATH') ?: '') . ';C:\Windows\System32',
-            ];
+            $response = $this->client->post($localApiUrl, [
+                'json' => [
+                    'url' => $url,
+                    'searchParams' => []
+                ],
+                'timeout' => 30,
+                'headers' => [
+                    'Content-Type' => 'application/json',
+                    'User-Agent' => 'Utilitary-Server/1.0',
+                    'X-API-Key' => config('services.puppeteer.api_key', 'utilitary-secret-key-2024')
+                ]
+            ]);
 
-            $process = new Process([$nodePath, $script, $url], base_path(), $env);
-            // Limitar por debajo del max_execution_time habitual (60s)
-            $process->setTimeout(45);
-            $process->setIdleTimeout(45);
-            $process->run();
-
-            if (!$process->isSuccessful()) {
-                \Log::error('puppeteer_failed', ['url' => $url, 'error' => $process->getErrorOutput(), 'output' => $process->getOutput()]);
+            if ($response->getStatusCode() !== 200) {
+                \Log::error('puppeteer_api_error', [
+                    'url' => $url,
+                    'status' => $response->getStatusCode(),
+                    'response' => (string) $response->getBody()
+                ]);
                 return null;
             }
 
-            $output = trim($process->getOutput());
-            $data = json_decode($output, true);
-            if (!is_array($data)) {
-                \Log::error('puppeteer_invalid_json', ['output' => $output]);
+            $data = json_decode((string) $response->getBody(), true);
+            
+            if (!$data || !$data['success']) {
+                \Log::error('puppeteer_api_failed', [
+                    'url' => $url,
+                    'response' => $data
+                ]);
                 return null;
             }
 
-            $publicPrice = isset($data['public_price']) ? (float) $data['public_price'] : (isset($data['price']) ? (float) $data['price'] : null);
-            $cardPrice = isset($data['card_price']) ? (float) $data['card_price'] : null;
-            $price = $publicPrice ?? $cardPrice;
+            $products = $data['data'] ?? [];
+            if (empty($products)) {
+                \Log::warning('puppeteer_no_products', ['url' => $url]);
+                return null;
+            }
+
+            // Tomar el primer producto encontrado
+            $product = $products[0];
+            $price = $this->toNumber($product['price'] ?? null);
+            $publicPrice = $this->toNumber($product['price'] ?? null);
+            $cardPrice = null; // Ripley no suele mostrar precio tarjeta en el scraping
 
             return [
-                'title' => $data['title'] ?? 'Producto',
+                'title' => $product['name'] ?? 'Producto Ripley',
                 'price' => $price,
                 'public_price' => $publicPrice ?? $price,
                 'cmr_price' => $cardPrice,
-                'image_url' => $data['image'] ?? 'https://via.placeholder.com/320x240.png?text=Producto',
+                'image_url' => $product['image'] ?? 'https://via.placeholder.com/320x240.png?text=Producto',
                 'store' => 'ripley',
-                'url' => $data['url'] ?? $url,
+                'url' => $product['link'] ?? $url,
             ];
-        } catch (ProcessTimedOutException $e) {
-            \Log::error('puppeteer_timeout', ['url' => $url, 'error' => $e->getMessage()]);
-            return null;
+            
         } catch (\Throwable $e) {
-            \Log::error('puppeteer_exception', ['url' => $url, 'error' => $e->getMessage()]);
+            \Log::error('puppeteer_api_exception', [
+                'url' => $url,
+                'error' => $e->getMessage()
+            ]);
             return null;
         }
     }
@@ -306,13 +364,20 @@ class OfferPriceScraperService
     private function scrapeFalabella(Crawler $crawler, string $url): array
     {
         $data = $this->parseJsonLd($crawler);
-        $publicPrices = $this->gatherPrices($crawler, [
+        $publicPrices = $this->gatherPricesExcludingClasses($crawler, [
             '.fb-product-cta__prices__price-final',
             '.product-info__price',
-            '.product-prices__value',
+            '.product-prices__value:not(.product-prices__value--cmr)',
             '[data-test-id="product-price"]',
             '[itemprop="price"]',
             'meta[property="product:price:amount"]',
+        ], ['crossed']);
+        $crossedPrices = $this->gatherPrices($crawler, [
+            '.crossed',
+            '.price-before',
+            '.price-old',
+            '.product-price__before',
+            '.fb-product-cta__prices__price-regular',
         ]);
         $cmrPrices = $this->gatherPrices($crawler, [
             '.product-prices__value--cmr',
@@ -322,11 +387,42 @@ class OfferPriceScraperService
         ]);
 
         $offerPrices = $this->extractOfferPrices($data);
+        $publicCandidates = $publicPrices;
+        if (!empty($cmrPrices)) {
+            $publicCandidates = array_values(array_filter($publicPrices, function ($price) use ($cmrPrices) {
+                foreach ($cmrPrices as $cmr) {
+                    if ($cmr !== null && $price !== null && abs($price - $cmr) < 0.01) {
+                        return false;
+                    }
+                }
+                return true;
+            }));
+        }
+
+        $inferredPublic = null;
+        $inferredCmr = null;
+        if (empty($cmrPrices) && count($offerPrices) >= 2) {
+            $maxOffer = $this->maxPrice($offerPrices);
+            $minOffer = $this->minPrice($offerPrices);
+            if (!empty($crossedPrices) && $this->priceMatchesAny($maxOffer, $crossedPrices)) {
+                $inferredPublic = $minOffer;
+                $inferredCmr = null;
+            } else {
+                $inferredPublic = $maxOffer;
+                $inferredCmr = $minOffer;
+            }
+        }
+
         $publicPreferred = $this->firstNonNull([
-            $this->maxPrice($offerPrices),
-            $publicPrices[0] ?? null,
+            $this->bestPrice($publicCandidates),
+            $this->bestPrice($publicPrices),
+            $inferredPublic,
+            empty($cmrPrices) ? $this->minPrice($offerPrices) : $this->maxPrice($offerPrices),
         ]);
-        $cmrPreferred = $cmrPrices[0] ?? (count($offerPrices) > 1 ? $this->minPrice($offerPrices) : null);
+        $cmrPreferred = $this->firstNonNull([
+            $this->bestPrice($cmrPrices),
+            $inferredCmr,
+        ]);
 
         if ($publicPreferred !== null) {
             $this->htmlPricePublic = $publicPreferred;
@@ -394,23 +490,57 @@ class OfferPriceScraperService
 
     private function scrapeOechsle(Crawler $crawler, string $url): array
     {
-        $publicPrices = $this->gatherPrices($crawler, [
+        $publicPrices = $this->gatherPricesExcludingClasses($crawler, [
             '.product-info-price .price',
             '.price-box .price',
             'meta[property="product:price:amount"]',
-        ]);
+        ], ['crossed', 'old', 'before']);
         $cardPrices = $this->gatherPrices($crawler, [
             '.product-info-price .oh-price',
             '.product-info-price .card-price',
             '.product-info-price .credit-price',
+            '#containerPrice .priceTOh',
+            '#containerPrice .priceTOh .labeled',
             '[data-testid="card-price"]',
         ]);
+        if ($this->oechsleApiCardPrice !== null) {
+            $cardPrices[] = $this->oechsleApiCardPrice;
+        }
+        $crossedPrices = $this->gatherPrices($crawler, [
+            '.crossed',
+            '.price-before',
+            '.price-old',
+            '.old-price',
+        ]);
 
-        $publicPreferred = $publicPrices[0] ?? null;
-        $cardPreferred = $cardPrices[0] ?? null;
+        $publicCandidates = $publicPrices;
+        if (!empty($cardPrices)) {
+            $publicCandidates = array_values(array_filter($publicPrices, function ($price) use ($cardPrices) {
+                foreach ($cardPrices as $card) {
+                    if ($card !== null && $price !== null && abs($price - $card) < 0.01) {
+                        return false;
+                    }
+                }
+                return true;
+            }));
+        }
 
-        $this->htmlPricePublic = $this->htmlPricePublic ?? $publicPreferred;
-        $this->htmlPriceCmr = $this->htmlPriceCmr ?? $cardPreferred;
+        $publicPreferred = $this->bestPrice($publicCandidates) ?? $this->bestPrice($publicPrices);
+        $cardPreferred = $this->oechsleApiCardPrice ?? $this->bestPrice($cardPrices);
+
+        if ($publicPreferred === null && !empty($publicPrices) && !empty($crossedPrices)) {
+            $maxPublic = $this->maxPrice($publicPrices);
+            if ($this->priceMatchesAny($maxPublic, $crossedPrices)) {
+                $publicPreferred = $this->minPrice($publicPrices);
+            }
+        }
+
+        if ($publicPreferred !== null) {
+            $this->htmlPricePublic = $publicPreferred;
+        }
+        if ($cardPreferred !== null) {
+            $this->htmlPriceCmr = $cardPreferred;
+        }
 
         $title = $this->textFirst($crawler, 'h1', 'Producto Oechsle');
         $image = $this->imageFirst($crawler, 'meta[property="og:image"]', 'content');
@@ -421,29 +551,73 @@ class OfferPriceScraperService
     private function scrapeSodimac(Crawler $crawler, string $url): array
     {
         $data = $this->parseJsonLd($crawler);
-        $publicPrices = $this->gatherPrices($crawler, [
-            '.product-prices__value',
+        $publicPrices = $this->gatherPricesExcludingClasses($crawler, [
+            '.product-prices__value:not(.product-prices__value--old):not(.product-prices__value--before):not(.product-prices__value--list):not(.crossed)',
             '.fbra_text--product-price',
             'meta[property="product:price:amount"]',
-        ]);
+        ], ['crossed', 'old', 'before']);
 
-        $cardPrices = $this->gatherPrices($crawler, [
+        $cardPrices = $this->gatherPricesExcludingText($crawler, [
             '.product-prices__card',
             '.product-prices__value--cmr',
             '.product-prices__value--unica',
             '[data-testid="card-price"]',
-        ]);
+        ], ['cuota', 'cuotas', 'meses', 'interes', 'intereses']);
 
+        $publicCandidates = $publicPrices;
+        if (!empty($cardPrices)) {
+            $publicCandidates = array_values(array_filter($publicPrices, function ($price) use ($cardPrices) {
+                foreach ($cardPrices as $card) {
+                    if ($card !== null && $price !== null && abs($price - $card) < 0.01) {
+                        return false;
+                    }
+                }
+                return true;
+            }));
+        }
+
+        $typedPublic = $this->htmlPricePublic;
         $preferred = $this->firstNonNull([
+            $typedPublic,
             $this->toNumber($data['offers']['price'] ?? null),
-            $publicPrices[0] ?? null,
+            $this->bestPrice($publicCandidates),
+            $this->bestPrice($publicPrices),
         ]);
 
-        $this->htmlPricePublic = $this->htmlPricePublic ?? $preferred;
-        $this->htmlPriceCmr = $this->htmlPriceCmr ?? ($cardPrices[0] ?? null);
+        $cardPreferred = $this->firstNonNull([
+            $this->bestPrice($cardPrices),
+            $this->htmlPriceCmr,
+        ]);
+
+        if ($preferred !== null && $this->htmlPricePublic === null) {
+            $this->htmlPricePublic = $preferred;
+        }
+        if ($cardPreferred !== null) {
+            $this->htmlPriceCmr = $cardPreferred;
+        } else {
+            $this->htmlPriceCmr = null;
+        }
 
         $title = $data['name'] ?? $this->textFirst($crawler, 'h1', 'Producto Sodimac');
         $image = $data['image'] ?? $this->imageFirst($crawler, 'meta[property="og:image"]', 'content');
+        if (is_array($image)) {
+            $image = $image[0] ?? null;
+        }
+        if (!$image) {
+            $image = $this->imageFirst($crawler, 'meta[property="og:image:secure_url"]', 'content');
+        }
+        if (!$image) {
+            $image = $this->imageFirst($crawler, 'meta[name="twitter:image"]', 'content');
+        }
+        if (!$image) {
+            $image = $this->imageFirst($crawler, 'img[itemprop="image"]', 'src');
+        }
+        if (!$image) {
+            $image = $this->imageFirst($crawler, 'img[data-testid="product-image"]', 'src');
+        }
+        if (!$image) {
+            $image = $this->imageFirst($crawler, 'img.product-image', 'src');
+        }
 
         return $this->buildPayload($title, $publicPrices, $image, 'sodimac', $url, $preferred, $publicPrices, $cardPrices);
     }
@@ -451,22 +625,113 @@ class OfferPriceScraperService
     private function scrapePromart(Crawler $crawler, string $url): array
     {
         $data = $this->parseJsonLd($crawler);
-        $publicPrices = $this->gatherPrices($crawler, [
-            '.product-price',
-            '.price-box .price',
+        $publicSelectors = [
             'meta[property="product:price:amount"]',
-        ]);
+        ];
+        $publicPrices = [];
+        foreach ($publicSelectors as $selector) {
+            $values = [];
+            $crawler->filter($selector)->each(function ($node) use (&$values) {
+                $values[] = $this->toNumber($node->attr('content') ?? $node->text());
+            });
+            $values = array_filter($values, fn ($p) => $p !== null && $p > 0);
+            if (!empty($values)) {
+                $publicPrices = array_merge($publicPrices, array_values($values));
+            }
+            \Log::info('promart_public_price_selector', [
+                'url' => $url,
+                'selector' => $selector,
+                'values' => array_values($values),
+            ]);
+        }
+
+        // Intentar obtener precio Tarjeta Oh vía API
+        $cardApiPrice = null;
+        try {
+            // Extraer SKU del HTML
+            $html = $crawler->html();
+            $skuId = null;
+            // Buscar en inputs ocultos o llamadas JS
+            if (preg_match('/id="___rc-p-sku-ids"\s+value="(\d+)"/', $html, $matches)) {
+                $skuId = $matches[1];
+            } elseif (preg_match('/buyButton\((\d+),/', $html, $matches)) {
+                $skuId = $matches[1];
+            } elseif (preg_match('/skuId["\']?:["\']?(\d+)["\']?/', $html, $matches)) {
+                $skuId = $matches[1];
+            }
+
+            if ($skuId) {
+                // Llamar a la API de VTEX
+                // sc=2 es canal de ventas online usual
+                $apiUrl = "https://www.promart.pe/api/catalog_system/pub/products/search/?fq=skuId:{$skuId}&sc=2";
+                \Log::info('promart_api_request', [
+                    'product_url' => $url,
+                    'sku_id' => $skuId,
+                    'api_url' => $apiUrl,
+                ]);
+                
+                $response = $this->client->get($apiUrl, [
+                    'headers' => [
+                        'User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                        'Accept' => 'application/json',
+                    ],
+                    'timeout' => 5,
+                    'verify' => false
+                ]);
+
+                $apiData = json_decode((string) $response->getBody(), true);
+                
+                if (!empty($apiData[0]['items'][0]['sellers'][0]['commertialOffer'])) {
+                    $offer = $apiData[0]['items'][0]['sellers'][0]['commertialOffer'];
+                    $basePrice = (float) ($offer['PriceWithoutDiscount'] ?? $offer['Price'] ?? 0);
+                    $teasers = $offer['PromotionTeasers'] ?? [];
+                    
+                    foreach ($teasers as $teaser) {
+                        // Buscar ID de medio de pago 203 (Tarjeta Oh)
+                        $isOh = false;
+                        if (isset($teaser['Conditions']['Parameters'])) {
+                            foreach ($teaser['Conditions']['Parameters'] as $param) {
+                                if (isset($param['Name']) && $param['Name'] === 'PaymentMethodId' && $param['Value'] == '203') {
+                                    $isOh = true;
+                                    break;
+                                }
+                            }
+                        }
+
+                        if ($isOh && isset($teaser['Effects']['Parameters'])) {
+                            foreach ($teaser['Effects']['Parameters'] as $effect) {
+                                if (($effect['Name'] ?? '') === 'PromotionalPriceTableItemsDiscount') {
+                                    $discount = (float) ($effect['Value'] ?? 0);
+                                    if ($discount > 0 && $basePrice > 0) {
+                                        $cardApiPrice = $basePrice - $discount;
+                                    }
+                                    break 2;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (\Throwable $e) {
+            \Log::warning('promart_api_error', ['url' => $url, 'error' => $e->getMessage()]);
+        }
 
         $cardPrices = $this->gatherPrices($crawler, [
             '.product-price__card',
             '.product-price__oh',
             '.price-oh',
+            '.price-toh',
+            '.js-price-toh',
             '.card-price',
             '[data-testid="card-price"]',
         ]);
 
+        if ($cardApiPrice !== null) {
+            array_unshift($cardPrices, $cardApiPrice);
+        }
+
         $preferred = $this->firstNonNull([
-            $this->toNumber($data['offers']['price'] ?? null),
+            $this->maxPrice($publicPrices),
             $publicPrices[0] ?? null,
         ]);
 
@@ -538,6 +803,42 @@ class OfferPriceScraperService
         return array_filter($prices, fn ($p) => $p !== null && $p > 0);
     }
 
+    private function gatherPricesExcludingClasses(Crawler $crawler, array $selectors, array $excludedClasses): array
+    {
+        $prices = [];
+        foreach ($selectors as $selector) {
+            $crawler->filter($selector)->each(function ($node) use (&$prices, $excludedClasses) {
+                $classAttr = $node->attr('class') ?? '';
+                foreach ($excludedClasses as $excluded) {
+                    if ($excluded !== '' && str_contains($classAttr, $excluded)) {
+                        return;
+                    }
+                }
+                $prices[] = $this->toNumber($node->attr('content') ?? $node->text());
+            });
+        }
+
+        return array_filter($prices, fn ($p) => $p !== null && $p > 0);
+    }
+
+    private function gatherPricesExcludingText(Crawler $crawler, array $selectors, array $excludedFragments): array
+    {
+        $prices = [];
+        foreach ($selectors as $selector) {
+            $crawler->filter($selector)->each(function ($node) use (&$prices, $excludedFragments) {
+                $text = strtolower(trim($node->text() ?? ''));
+                foreach ($excludedFragments as $fragment) {
+                    if ($fragment !== '' && str_contains($text, $fragment)) {
+                        return;
+                    }
+                }
+                $prices[] = $this->toNumber($node->attr('content') ?? $node->text());
+            });
+        }
+
+        return array_filter($prices, fn ($p) => $p !== null && $p > 0);
+    }
+
     private function toNumber(?string $raw): ?float
     {
         if ($raw === null) {
@@ -600,6 +901,9 @@ class OfferPriceScraperService
             $this->htmlPriceCmr,
             $this->bestPrice($cmrPrices),
         ]);
+        if ($cmrBest === null) {
+            $cmrBest = $publicBest;
+        }
         $price = $preferredPrice ?? $this->bestPrice($prices) ?? $publicBest ?? $cmrBest;
 
         return [
@@ -631,6 +935,7 @@ class OfferPriceScraperService
         }
         return null;
     }
+
 
     private function extractOfferPrices(array $data): array
     {
@@ -676,6 +981,11 @@ class OfferPriceScraperService
 
     private function extractPricesFromHtml(string $html): void
     {
+        $this->extractSodimacNextDataPrices($html);
+        if ($this->sodimacNextDataPricesPresent && ($this->htmlPricePublic !== null || $this->htmlPriceCmr !== null)) {
+            return;
+        }
+        $this->extractSodimacTypedPrices($html);
         $patternsPublic = [
             '/"price"\\s*:\\s*\\["?([0-9.,]+)"?\\]/i',
             '/"price"\\s*:\\s*"([0-9.,]+)"/i',
@@ -695,6 +1005,8 @@ class OfferPriceScraperService
             '/(?:tc|t\\.c\\.)\\s+ripley[^0-9]{0,80}([0-9]{1,3}(?:[\\.,][0-9]{3})*(?:[\\.,][0-9]{2})?)/i',
             '/tarjeta\\s+oh!?[^0-9]{0,80}([0-9]{1,3}(?:[\\.,][0-9]{3})*(?:[\\.,][0-9]{2})?)/i',
             '/precio\\s+oh!?[^0-9]{0,80}([0-9]{1,3}(?:[\\.,][0-9]{3})*(?:[\\.,][0-9]{2})?)/i',
+            '/(?:S\\/\\s*)?([0-9]{1,3}(?:[\\.,][0-9]{3})*(?:[\\.,][0-9]{2})?)\\s*(?:con\\s+)?tarjeta\\s+oh!?/i',
+            '/([0-9]{1,3}(?:[\\.,][0-9]{3})*(?:[\\.,][0-9]{2})?)\\s*(?:S\\/\\s*)?(?:[^0-9]{0,40})?tarjeta\\s+oh!?/i',
             '/\\bunica\\b[^0-9]{0,80}([0-9]{1,3}(?:[\\.,][0-9]{3})*(?:[\\.,][0-9]{2})?)/i',
             '/\\bcmr\\b[^0-9]{0,80}([0-9]{1,3}(?:[\\.,][0-9]{3})*(?:[\\.,][0-9]{2})?)/i',
         ];
@@ -710,9 +1022,31 @@ class OfferPriceScraperService
             }
         }
 
+        if ($this->currentStore === 'promart') {
+            return;
+        }
+
+        if ($this->sodimacTypedPricesPresent && $this->sodimacTypedCmrMissing) {
+            return;
+        }
+
         foreach ($patternsCmr as $pattern) {
             if (preg_match($pattern, $html, $m)) {
                 if (stripos($m[0], 'jsx-') !== false) {
+                    continue;
+                }
+                $lowerMatch = strtolower($m[0]);
+                if (
+                    str_contains($lowerMatch, 'recibe') ||
+                    str_contains($lowerMatch, 'cashback') ||
+                    str_contains($lowerMatch, 'primera compra') ||
+                    str_contains($lowerMatch, 'primera compra online') ||
+                    str_contains($lowerMatch, 'cuota') ||
+                    str_contains($lowerMatch, 'cuotas') ||
+                    str_contains($lowerMatch, 'meses') ||
+                    str_contains($lowerMatch, 'interes') ||
+                    str_contains($lowerMatch, 'intereses')
+                ) {
                     continue;
                 }
                 $value = $this->toNumber($m[1] ?? $m[2] ?? null);
@@ -722,6 +1056,249 @@ class OfferPriceScraperService
                     break;
                 }
             }
+        }
+    }
+
+    private function extractSodimacTypedPrices(string $html): void
+    {
+        $patterns = [
+            'cmr' => '/"type"\\s*:\\s*"cmrPrice"[^}]*"price"\\s*:\\s*\\["?([0-9.,]+)"?\\]/i',
+            'event' => '/"type"\\s*:\\s*"eventPrice"[^}]*"price"\\s*:\\s*\\["?([0-9.,]+)"?\\]/i',
+            'normal' => '/"type"\\s*:\\s*"normalPrice"[^}]*"price"\\s*:\\s*\\["?([0-9.,]+)"?\\]/i',
+        ];
+
+        $found = [];
+        foreach ($patterns as $label => $pattern) {
+            if (!preg_match_all($pattern, $html, $matches, PREG_SET_ORDER | PREG_OFFSET_CAPTURE)) {
+                continue;
+            }
+            foreach ($matches as $m) {
+                $raw = $m[0][0] ?? '';
+                $offset = $m[0][1] ?? 0;
+                $window = substr($html, max(0, $offset - 400), 800);
+                if (stripos($window, 'CES ORO') !== false) {
+                    continue;
+                }
+                $value = $this->toNumber($m[1][0] ?? null);
+                if ($value !== null) {
+                    $found[$label] = $value;
+                    $this->debugMatches[] = ['pattern' => $pattern, 'raw' => $raw, 'value' => $value, 'type' => $label];
+                    break;
+                }
+            }
+        }
+
+        if (array_key_exists('cmr', $found)) {
+            $this->htmlPriceCmr = $found['cmr'];
+            $this->sodimacTypedPricesPresent = true;
+            $this->sodimacTypedCmrMissing = false;
+        }
+        if (array_key_exists('event', $found)) {
+            $this->htmlPricePublic = $found['event'];
+            $this->sodimacTypedPricesPresent = true;
+        } elseif (array_key_exists('normal', $found)) {
+            $this->htmlPricePublic = $found['normal'];
+            $this->sodimacTypedPricesPresent = true;
+        }
+        if ($this->sodimacTypedPricesPresent && !array_key_exists('cmr', $found)) {
+            $this->htmlPriceCmr = null;
+            $this->sodimacTypedCmrMissing = true;
+        }
+    }
+
+    private function extractSodimacNextDataPrices(string $html): void
+    {
+        if (!preg_match('/<script id="__NEXT_DATA__" type="application\\/json">(.+?)<\\/script>/s', $html, $m)) {
+            return;
+        }
+
+        $data = json_decode($m[1], true);
+        if (!is_array($data)) {
+            return;
+        }
+
+        $productData = $data['props']['pageProps']['productData'] ?? null;
+        if (!is_array($productData)) {
+            return;
+        }
+
+        $productSites = $productData['productSites'] ?? [];
+        if (is_array($productSites) && !in_array('SODIMAC', $productSites, true)) {
+            return;
+        }
+
+        $variantId = $data['query']['variantId'] ?? ($productData['currentVariant'] ?? null);
+        $variants = $productData['variants'] ?? [];
+        if (!is_array($variants) || empty($variants)) {
+            return;
+        }
+
+        $variant = null;
+        if ($variantId) {
+            foreach ($variants as $candidate) {
+                if (is_array($candidate) && (string) ($candidate['id'] ?? '') === (string) $variantId) {
+                    $variant = $candidate;
+                    break;
+                }
+            }
+        }
+        if (!$variant) {
+            $variant = $variants[0] ?? null;
+        }
+        if (!is_array($variant)) {
+            return;
+        }
+
+        $prices = $variant['prices'] ?? [];
+        if (!is_array($prices) || empty($prices)) {
+            return;
+        }
+
+        $public = null;
+        $cmr = null;
+        $publicPriority = ['eventprice', 'internetprice', 'publicprice', 'normalprice', 'price'];
+        $publicBestIndex = null;
+
+        foreach ($prices as $entry) {
+            if (!is_array($entry)) {
+                continue;
+            }
+            $type = strtolower((string) ($entry['type'] ?? ''));
+            $crossed = (bool) ($entry['crossed'] ?? false);
+            $rawPrice = null;
+            if (isset($entry['price'][0])) {
+                $rawPrice = $entry['price'][0];
+            } elseif (isset($entry['price'])) {
+                $rawPrice = $entry['price'];
+            }
+            $value = $this->toNumber(is_scalar($rawPrice) ? (string) $rawPrice : null);
+            if ($value === null) {
+                continue;
+            }
+
+            if ($type !== '' && (str_contains($type, 'cmr') || str_contains($type, 'card') || str_contains($type, 'unica'))) {
+                $cmr = $cmr ?? $value;
+                continue;
+            }
+
+            if ($crossed) {
+                continue;
+            }
+
+            if ($type === '') {
+                $public = $public ?? $value;
+                continue;
+            }
+
+            if (in_array($type, $publicPriority, true)) {
+                $currentIndex = array_search($type, $publicPriority, true);
+                if ($publicBestIndex === null || $currentIndex < $publicBestIndex) {
+                    $publicBestIndex = $currentIndex;
+                    $public = $value;
+                }
+            }
+        }
+
+        if ($public !== null) {
+            $this->htmlPricePublic = $public;
+            $this->sodimacTypedPricesPresent = true;
+        }
+        if ($cmr !== null) {
+            $this->htmlPriceCmr = $cmr;
+            $this->sodimacTypedPricesPresent = true;
+            $this->sodimacTypedCmrMissing = false;
+        }
+        if ($this->sodimacTypedPricesPresent && $cmr === null) {
+            $this->htmlPriceCmr = null;
+            $this->sodimacTypedCmrMissing = true;
+        }
+
+        if ($this->sodimacTypedPricesPresent) {
+            $this->sodimacNextDataPricesPresent = true;
+            $this->debugMatches[] = [
+                'pattern' => '__NEXT_DATA__ prices',
+                'raw' => 'variant:' . ($variantId ?? 'n/a'),
+                'value' => $public ?? $cmr,
+                'type' => 'sodimac_next_data',
+            ];
+        }
+    }
+
+
+    private function priceMatchesAny(?float $value, array $candidates, float $tolerance = 0.01): bool
+    {
+        if ($value === null) {
+            return false;
+        }
+        foreach ($candidates as $candidate) {
+            if ($candidate !== null && abs($value - $candidate) <= $tolerance) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private function extractOechsleProductIdFromHtml(string $html): ?string
+    {
+        if (preg_match('/"productId"\\s*:\\s*([0-9]+)/', $html, $m)) {
+            return $m[1];
+        }
+        if (preg_match('/productId"\\s*value="([0-9]+)"/', $html, $m)) {
+            return $m[1];
+        }
+        return null;
+    }
+
+    private function extractOechsleProductIdFromUrl(string $url): ?string
+    {
+        if (preg_match('/-([0-9]+)\\/p\\/?$/', $url, $m)) {
+            return $m[1];
+        }
+        if (preg_match('/\\/([0-9]+)\\/p\\/?$/', $url, $m)) {
+            return $m[1];
+        }
+        return null;
+    }
+
+    private function fetchOechsleCardPriceFromApi(string $productId): ?float
+    {
+        $endpoint = 'https://api.retailrocket.net/api/1.0/partner/5e6260df97a5251a10daf30d/items/';
+        $url = $endpoint . '?itemsIds=' . urlencode($productId) . '&stock=&format=json';
+
+        try {
+            $response = $this->client->get($url, [
+                'timeout' => 12,
+                'http_errors' => false,
+            ]);
+            if ($response->getStatusCode() !== 200) {
+                return null;
+            }
+            $data = json_decode((string) $response->getBody(), true);
+
+            if (!is_array($data)) {
+                return null;
+            }
+            $items = null;
+            if (isset($data['value'])) {
+                $items = $data['value'];
+            } elseif (is_array($data) && array_is_list($data)) {
+                $items = $data;
+            }
+            if (!is_array($items) || empty($items)) {
+                return null;
+            }
+            $item = $items[0];
+            $params = $item['Params'] ?? ($item['params'] ?? null);
+            $card = null;
+            if (is_array($params)) {
+                $card = $params['tarjeta'] ?? ($params['Tarjeta'] ?? null);
+            }
+            if ($card === null) {
+                return null;
+            }
+            return $this->toNumber((string) $card);
+        } catch (\Throwable $e) {
+            return null;
         }
     }
 }

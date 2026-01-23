@@ -621,6 +621,53 @@ document.addEventListener('DOMContentLoaded', function () {
         fetchForm(form, target);
     });
 
+    const retrySearch = async (button) => {
+        const query = (button.dataset.query || '').trim();
+        if (!query) return;
+        const card = button.closest('.smc-result-card');
+        const storeList = (button.dataset.stores || '').split(',').map((s) => s.trim()).filter((s) => s !== '');
+        const stores = storeList.length
+            ? storeList
+            : Array.from(document.querySelectorAll('input[name="stores[]"]:checked')).map((el) => el.value);
+        const purchaseUuid = document.querySelector('input[name="purchase_uuid"]')?.value || '';
+        const formData = new FormData();
+        formData.append('query', query);
+        stores.forEach((store) => formData.append('stores[]', store));
+        if (purchaseUuid) formData.append('purchase_uuid', purchaseUuid);
+
+        try {
+            button.disabled = true;
+            if (typeof showLoader === 'function') showLoader();
+            const res = await fetch("{{ url('/supermarket-comparator/retry-search') }}", {
+                method: 'POST',
+                headers: {
+                    'Accept': 'application/json',
+                    'X-CSRF-TOKEN': csrfToken,
+                },
+                body: formData,
+            });
+            if (!res.ok) throw new Error('Error al reintentar');
+            const data = await res.json();
+            if (data && data.html && card) {
+                card.outerHTML = data.html;
+            }
+        } catch (error) {
+            console.error(error);
+            alert('No se pudo reintentar el scrapeo. Intenta nuevamente.');
+        } finally {
+            button.disabled = false;
+            if (typeof hideLoader === 'function') hideLoader();
+        }
+    };
+    window.smcRetrySearch = retrySearch;
+
+    document.addEventListener('click', function (e) {
+        const btn = e.target.closest('.smc-retry-search');
+        if (!btn) return;
+        e.preventDefault();
+        retrySearch(btn);
+    });
+
     const collectSelectedItems = (wrapper) => {
         const items = [];
         wrapper.querySelectorAll('.smc-select-item:checked').forEach((checkbox) => {

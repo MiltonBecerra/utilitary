@@ -59,7 +59,7 @@ class OfferAlertController extends Controller
         $lastEmail = Auth::check()
             ? Auth::user()->email
             : ($lastAlert?->contact_email);
-        $stores = ['falabella','ripley','oechsle','sodimac','promart','mercado_libre'];
+        $stores = ['falabella','ripley','oechsle','sodimac','promart'];
         $utility = $this->utility();
         $utilityId = $utility?->id;
         $plan = Auth::check() ? Auth::user()->getActivePlan($utilityId) : $this->guestService->getGuestPlan($utilityId);
