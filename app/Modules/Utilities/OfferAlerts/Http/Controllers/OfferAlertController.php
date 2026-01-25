@@ -162,38 +162,24 @@ class OfferAlertController extends Controller
         $priceType = $request->price_type;
         $selectedPrice = $priceType === 'cmr' ? $cmrPrice : $publicPrice;
 
-        // Validación estricta mejorada: si el usuario quiere precio de tarjeta, debe existir y ser válido
+        // Validación con fallback automático: mostrar precio disponible según lo que tenga el producto
         if ($priceType === 'cmr') {
-            // Validación más robusta: null, false, 0, o igual al precio público no son válidos
+            // Validación más flexible: null, false o 0 no son válidos
             $isValidCardPrice = $cmrPrice !== null && 
                                $cmrPrice !== false && 
                                is_numeric($cmrPrice) && 
-                               $cmrPrice > 0 &&
-                               $cmrPrice != $publicPrice;
-                                
+                               $cmrPrice > 0;
+                         
             if (!$isValidCardPrice) {
-                $cardName = match ($store) {
-                    'ripley' => 'Tarjeta Ripley',
-                    'oechsle' => 'Tarjeta Oh',
-                    'sodimac' => 'Única/CMR',
-                    'promart' => 'Tarjeta Oh',
-                    default => 'CMR',
-                };
+                // Si no hay precio CMR válido, usar automáticamente el precio público
+                $selectedPrice = $publicPrice;
+                $priceType = 'public'; // Cambiar el tipo para consistencia
                 
-                // Mensajes específicos por tienda y contexto mejorados
-                $errorMessage = match ($store) {
-                    'ripley' => "Este producto no tiene precio con Tarjeta Ripley disponible. Muchos productos en Ripley solo muestran precio público. Por favor, selecciona 'Precio Público' para monitorear este producto.",
-                    'oechsle' => "Este producto no tiene precio con Tarjeta Oh disponible. Oechsle suele ofrecer precios con tarjeta solo en productos seleccionados. Prueba con 'Precio Público'.",
-                    'sodimac' => "Este producto no tiene precio con Única/CMR disponible. Sodimac muestra precios con tarjeta en ciertos productos. Selecciona 'Precio Público' para continuar.",
-                    'promart' => "Este producto no tiene precio con Tarjeta Oh disponible. Promart ofrece precios con tarjeta en productos específicos. Usa 'Precio Público' para monitorear.",
-                    default => "Este producto no tiene precio con {$cardName} disponible. Por favor, selecciona 'Precio Público' para monitorear este producto.",
-                };
-                
-                return back()
-                    ->withErrors(['msg' => $errorMessage])
-                    ->withInput();
+                // Mantener cmr_price como null para que el frontend muestre "No disponible"
+                $cmrPrice = null;
+            } else {
+                $selectedPrice = $cmrPrice;
             }
-            $selectedPrice = $cmrPrice;
         } else {
             $selectedPrice = $publicPrice;
         }

@@ -552,17 +552,29 @@
                                 @forelse($alerts as $alert)
                                     <tr data-alert-id="{{ $alert->id }}">
 @php
+                                            // Lógica mejorada para mostrar precio disponible según lo que tenga el producto
                                             if ($alert->price_type === 'cmr') {
                                                 $displayPrice = $alert->cmr_price;
                                                 $priceUnavailable = $displayPrice === null;
+                                                $priceTypeLabel = 'CMR';
+                                                
+                                                // Si no hay precio CMR, mostrar automáticamente el precio público
+                                                if ($priceUnavailable && $alert->public_price !== null) {
+                                                    $displayPrice = $alert->public_price;
+                                                    $priceUnavailable = false;
+                                                    $priceTypeLabel = 'Público (fallback)';
+                                                }
                                             } else {
                                                 $displayPrice = $alert->public_price;
                                                 $priceUnavailable = $displayPrice === null;
+                                                $priceTypeLabel = 'Público';
                                             }
                                             
-                                            // Fallback solo para mostrar algo, no para reemplazar precio específico
-                                            if ($displayPrice === null) {
+                                            // Fallback final solo para mostrar algo
+                                            if ($displayPrice === null && $alert->current_price !== null) {
                                                 $displayPrice = $alert->current_price;
+                                                $priceUnavailable = false;
+                                                $priceTypeLabel = 'Actual';
                                             }
                                         @endphp
                                         <td class="align-middle">
@@ -590,7 +602,10 @@
                                             @if($priceUnavailable)
                                                 <span class="text-muted">No disponible</span>
                                             @else
-                                                S/ {{ number_format($displayPrice, 2) }}
+                                                <div>S/ {{ number_format($displayPrice, 2) }}</div>
+                                                @if(isset($priceTypeLabel) && $priceTypeLabel !== 'Público')
+                                                    <small class="text-muted">{{ $priceTypeLabel }}</small>
+                                                @endif
                                             @endif
                                         </td>
                                         <td class="align-middle text-nowrap">{{ $alert->target_price ? 'S/ '.number_format($alert->target_price, 2) : '-' }}</td>
@@ -853,21 +868,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 indicator.remove();
             }
             
-            // Verificación simple: si no hay elementos de precio tarjeta visibles, mostrar advertencia
-            if (cmrRadio && cmrRadio.checked) {
-                const warning = document.createElement('div');
-                warning.id = 'card-price-warning';
-                warning.className = 'alert alert-warning mt-2';
-                warning.innerHTML = `
-                    <i class="fas fa-exclamation-triangle"></i> 
-                    <strong>Atención:</strong> Este producto podría no tener precio con Tarjeta Ripley disponible. 
-                    Si al crear la alerta recibes un error, por favor selecciona "Precio Público".
-                `;
-                
-                if (group && !document.getElementById('card-price-warning')) {
-                    group.parentNode.insertBefore(warning, group.nextSibling);
-                }
-            }
+            // Eliminar advertencia preventiva para permitir funcionamiento normal con precios CMR
         } catch (error) {
             console.log('No se pudo verificar disponibilidad de precio de tarjeta');
             // Remover indicador en caso de error
@@ -1169,11 +1170,34 @@ document.addEventListener('DOMContentLoaded', function () {
                     'X-CSRF-TOKEN': token || '',
                 },
             });
-            if (!res.ok) throw new Error('No se pudo eliminar la alerta.');
+if (!res.ok) throw new Error('No se pudo eliminar la alerta.');
             const row = form.closest('tr') || (alertId ? document.querySelector(`tr[data-alert-id="${alertId}"]`) : null);
             if (row) row.remove();
             const card = form.closest('.card') || (alertId ? document.querySelector(`.card[data-alert-id="${alertId}"]`) : null);
             if (card) card.remove();
+            
+            // Actualizar contador de alertas en el header
+            const alertCounter = document.querySelector('.fx-stat-value');
+            if (alertCounter) {
+                const currentCount = parseInt(alertCounter.textContent) || 0;
+                const newCount = Math.max(0, currentCount - 1);
+                alertCounter.textContent = newCount;
+            }
+            
+            // Mostrar mensaje de éxito
+            const alertHtml = `
+                <div class="alert alert-success alert-dismissible fade show mb-3">
+                    <button type="button" class="close" data-dismiss="alert">×</button>
+                    <i class="fas fa-check"></i> Alerta eliminada exitosamente
+                </div>
+            `;
+            const headerContainer = document.querySelector('.content-header .container-fluid');
+            if (headerContainer) {
+                // Eliminar alertas anteriores para evitar acumulación
+                const existingAlerts = headerContainer.querySelectorAll('.alert');
+                existingAlerts.forEach(alert => alert.remove());
+                headerContainer.insertAdjacentHTML('beforeend', alertHtml);
+            }
         } catch (error) {
             console.error('Error eliminando alerta', error);
         }

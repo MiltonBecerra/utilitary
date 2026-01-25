@@ -794,7 +794,36 @@ class OfferPriceScraperService
             $image = $this->imageFirst($crawler, 'img.product-image', 'src');
         }
 
-        return $this->buildPayload($title, $publicPrices, $image, 'sodimac', $url, $preferred, $publicPrices, $cardPrices);
+return $this->buildPayload($title, $publicPrices, $image, 'sodimac', $url, $preferred, $publicPrices, $cardPrices);
+    }
+
+    /**
+     * Extrae el productId de una URL de Promart
+     * Maneja tanto SKUs largos (1001477250) como cortos (150284)
+     */
+    private function extractPromartProductIdFromUrl(string $url): ?string
+    {
+        // 1. Patrón principal: número con guion antes del /p (SKUs largos)
+        if (preg_match('/-(\d+)\/p\/?$/', $url, $matches)) {
+            return $matches[1];
+        }
+        
+        // 2. Patrón mejorado: número antes del /p sin importar guion (SKUs cortos)
+        if (preg_match('/(\d+)\/p\/?$/', $url, $matches)) {
+            return $matches[1];
+        }
+        
+        // 3. Fallback: buscar cualquier número en URLs que terminan en /p
+        if (preg_match('/\/p$/', $url) && preg_match_all('/(\d+)/', $url, $matches)) {
+            return end($matches[1]);
+        }
+        
+        // 4. URLs con .html al final
+        if (preg_match('/(\d+)(?:\/?\.html)?$/', $url, $matches)) {
+            return $matches[1];
+        }
+        
+        return null;
     }
 
     private function scrapePromart(Crawler $crawler, string $url): array
@@ -820,31 +849,75 @@ class OfferPriceScraperService
             ]);
         }
 
-        // Intentar obtener precio Tarjeta Oh vía API
+// Intentar obtener precio Tarjeta Oh vía API
         $cardApiPrice = null;
         try {
-            // Extraer SKU del HTML
-            $html = $crawler->html();
-            $skuId = null;
-            // Buscar en inputs ocultos o llamadas JS
-            if (preg_match('/id="___rc-p-sku-ids"\s+value="(\d+)"/', $html, $matches)) {
-                $skuId = $matches[1];
-            } elseif (preg_match('/buyButton\((\d+),/', $html, $matches)) {
-                $skuId = $matches[1];
-            } elseif (preg_match('/skuId["\']?:["\']?(\d+)["\']?/', $html, $matches)) {
-                $skuId = $matches[1];
+            // PRIMERO: Intentar extraer productId desde la URL (más confiable)
+            $productId = $this->extractPromartProductIdFromUrl($url);
+            $skuId = null; // Este será el itemId extraído de la API
+            
+            // Validar que el productId extraído de la URL sea válido
+            // SKUs válidos de Promart suelen tener al menos 5-6 dígitos
+            if ($productId && strlen($productId) < 5) {
+                \Log::info('promart_invalid_url_product_id', [
+                    'url' => $url,
+                    'extracted_id' => $productId,
+                    'reason' => 'Too short, will search in HTML'
+                ]);
+                $productId = null; // Forzar búsqueda en HTML
             }
+            
+            // SEGUNDO: Si no se encontró en URL, buscar en HTML con múltiples patrones
+            if (!$productId) {
+                $html = $crawler->html();
+                
+                // Prioridad 1: Input hidden de VTEX (más confiable)
+                if (preg_match('/id="___rc-p-sku-ids"\s+value="(\d+)"/', $html, $matches)) {
+                    $productId = $matches[1];
+                }
+                // Prioridad 2: Meta tag de schema.org productID
+                elseif (preg_match('/itemprop=["\']productID["\']\s+content=["\'](\d+)["\']/', $html, $matches)) {
+                    $productId = $matches[1];
+                }
+                // Prioridad 3: Meta tag de SKU
+                elseif (preg_match('/itemprop=["\']sku["\']\s+content=["\'](\d+)["\']/', $html, $matches)) {
+                    $productId = $matches[1];
+                }
+                // Prioridad 4: Función buyButton de JavaScript
+                elseif (preg_match('/buyButton\((\d+),/', $html, $matches)) {
+                    $productId = $matches[1];
+                }
+                // Prioridad 5: JSON-LD structured data
+                elseif (preg_match('/"productId":\s*(\d+)/', $html, $matches)) {
+                    $productId = $matches[1];
+                }
+                // Prioridad 6: Cualquier referencia a skuId
+                elseif (preg_match('/skuId["\']?:["\']?(\d+)["\']?/', $html, $matches)) {
+                    $productId = $matches[1];
+                }
+                
+                \Log::info('promart_html_extraction', [
+                    'url' => $url,
+                    'product_id_found' => $productId ? true : false,
+                    'patterns_attempted' => 6
+                ]);
+            }
+            
+// Logging para debuggear qué productId se está usando
+            \Log::info('promart_product_extraction', [
+                'url' => $url,
+                'product_id_from_url' => $productId,
+            ]);
 
-            if ($skuId) {
-                // Llamar a la API de VTEX
-                // sc=2 es canal de ventas online usual
-                $apiUrl = "https://www.promart.pe/api/catalog_system/pub/products/search/?fq=skuId:{$skuId}&sc=2";
+            if ($productId) {
+// Llamar a la API de VTEX con productId
+                $apiUrl = "https://www.promart.pe/api/catalog_system/pub/products/search/?fq=productId:{$productId}&sc=2";
                 \Log::info('promart_api_request', [
                     'product_url' => $url,
-                    'sku_id' => $skuId,
+                    'product_id' => $productId,
                     'api_url' => $apiUrl,
                 ]);
-                
+                 
                 $response = $this->client->get($apiUrl, [
                     'headers' => [
                         'User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -857,9 +930,19 @@ class OfferPriceScraperService
                 $apiData = json_decode((string) $response->getBody(), true);
                 
                 if (!empty($apiData[0]['items'][0]['sellers'][0]['commertialOffer'])) {
+                    // Extraer el itemId real (SKU) desde la respuesta de la API
+                    $itemId = $apiData[0]['items'][0]['itemId'] ?? null;
+                    
                     $offer = $apiData[0]['items'][0]['sellers'][0]['commertialOffer'];
                     $basePrice = (float) ($offer['PriceWithoutDiscount'] ?? $offer['Price'] ?? 0);
                     $teasers = $offer['PromotionTeasers'] ?? [];
+                    
+                    \Log::info('promart_item_details', [
+                        'product_id' => $productId,
+                        'item_id' => $itemId,
+                        'base_price' => $basePrice,
+                        'promotions_count' => count($teasers)
+                    ]);
                     
                     foreach ($teasers as $teaser) {
                         // Buscar ID de medio de pago 203 (Tarjeta Oh)
@@ -879,12 +962,20 @@ class OfferPriceScraperService
                                     $discount = (float) ($effect['Value'] ?? 0);
                                     if ($discount > 0 && $basePrice > 0) {
                                         $cardApiPrice = $basePrice - $discount;
+                                        
+                                        \Log::info('promart_card_price_calculated', [
+                                            'product_id' => $productId,
+                                            'item_id' => $itemId,
+                                            'base_price' => $basePrice,
+                                            'discount' => $discount,
+                                            'card_price' => $cardApiPrice
+                                        ]);
                                     }
                                     break 2;
                                 }
                             }
                         }
-                    }
+}
                 }
             }
         } catch (\Throwable $e) {
