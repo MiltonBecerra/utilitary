@@ -1,6 +1,6 @@
 <?php
 
-use App\Services\OfferPriceScraperService;
+use App\Modules\Utilities\OfferAlerts\Services\OfferPriceScraperService;
 use GuzzleHttp\Client;
 
 require __DIR__ . '/vendor/autoload.php';

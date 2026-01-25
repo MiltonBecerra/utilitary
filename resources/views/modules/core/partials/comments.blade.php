@@ -184,7 +184,10 @@ document.addEventListener('DOMContentLoaded', function () {
     const storedName = isGuest ? localStorage.getItem(storageKey) : null;
     const blocks = document.querySelectorAll('.guest-name-block');
 
-    const applyName = (block, name) => {
+    // Variable para rastrear si el usuario está editando activamente
+    let isEditingName = false;
+
+    const applyName = (block, name, forceInput = false) => {
         if (!block) return;
         const input = block.querySelector('.guest-name-input');
         const display = block.querySelector('.guest-name-display');
@@ -192,7 +195,7 @@ document.addEventListener('DOMContentLoaded', function () {
         const title = block.querySelector('label');
         if (!input || !display || !label) return;
 
-        if (name && name.trim() !== '') {
+        if (name && name.trim() !== '' && !forceInput && !isEditingName) {
             label.textContent = name;
             input.classList.add('d-none');
             input.required = false;
@@ -210,7 +213,23 @@ document.addEventListener('DOMContentLoaded', function () {
     if (isGuest && storedName) {
         blocks.forEach(block => {
             const input = block.querySelector('.guest-name-input');
-            if (input) input.value = storedName;
+            if (input) {
+                input.value = storedName;
+                // Añadir event listeners para rastrear edición
+                input.addEventListener('focus', () => isEditingName = true);
+                input.addEventListener('blur', () => {
+                    isEditingName = false;
+                    if (input.value.trim()) {
+                        const name = input.value.trim();
+                        localStorage.setItem(storageKey, name);
+                        applyName(block, name);
+                    }
+                });
+                // Añadir event listener para detectar cambios de texto
+                input.addEventListener('input', () => {
+                    isEditingName = true;
+                });
+            }
             applyName(block, storedName);
         });
     }
@@ -408,6 +427,36 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     const handleCommentSubmit = async (form) => {
+        // Validar que el campo de comentario no esté vacío
+        const commentInput = form.querySelector('input[name="comment"], textarea[name="comment"]');
+        const commentValue = commentInput?.value.trim();
+        
+        if (!commentValue) {
+            // Si el comentario está vacío, poner focus y salir
+            if (commentInput) {
+                commentInput.focus();
+                // Mostrar alerta simple
+                const alertDiv = document.createElement('div');
+                alertDiv.className = 'alert alert-warning alert-dismissible fade show';
+                alertDiv.style.position = 'fixed';
+                alertDiv.style.top = '20px';
+                alertDiv.style.right = '20px';
+                alertDiv.style.zIndex = '9999';
+                alertDiv.style.maxWidth = '300px';
+                alertDiv.innerHTML = `
+                    Por favor, escribe un comentario antes de enviar
+                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                `;
+                document.body.appendChild(alertDiv);
+                setTimeout(() => {
+                    if (alertDiv.parentNode) {
+                        alertDiv.parentNode.removeChild(alertDiv);
+                    }
+                }, 3000);
+            }
+            return false;
+        }
+        
         const submitBtn = form.querySelector('button[type="submit"]');
         const submitIcon = submitBtn ? submitBtn.querySelector('.submit-icon') : null;
         const submitSpinner = submitBtn ? submitBtn.querySelector('.submit-spinner') : null;
@@ -422,13 +471,18 @@ document.addEventListener('DOMContentLoaded', function () {
         }
         const input = form.querySelector('.guest-name-input');
         if (isGuest && input) {
-            if ((input.classList.contains('d-none') || input.value.trim() === '') && storedName) {
+            // NO restaurar automáticamente si el input tiene contenido o está siendo editado
+            if (input.classList.contains('d-none') && storedName && !input.value.trim() && !isEditingName) {
                 input.value = storedName;
+                applyName(block, storedName); // Ocultar input si se cargó desde cache
             }
             if (input.value.trim() !== '') {
                 const name = input.value.trim();
                 localStorage.setItem(storageKey, name);
-                blocks.forEach(block => applyName(block, name));
+                // NO ocultar input inmediatamente - esperar a que el usuario termine
+                if (!isEditingName) {
+                    blocks.forEach(block => applyName(block, name));
+                }
             } else {
                 input.classList.remove('d-none');
                 input.required = true;
@@ -504,10 +558,38 @@ document.addEventListener('DOMContentLoaded', function () {
     document.addEventListener('keydown', function (e) {
         if (e.key !== 'Enter') return;
         if (e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) return;
+        
         const input = e.target;
-        if (!input || !input.matches('input[name="comment"]')) return;
         const form = input.closest('form.comment-form, form.reply-form');
         if (!form) return;
+        
+        // Manejar Enter en campo de nombre de invitado
+        if (input.matches('.guest-name-input')) {
+            e.preventDefault(); // Prevenir envío del formulario
+            if (input.value.trim()) {
+                const block = input.closest('.guest-name-block');
+                const name = input.value.trim();
+                localStorage.setItem(storageKey, name);
+                
+                // Actualizar todos los bloques con el nuevo nombre
+                document.querySelectorAll('.guest-name-block').forEach(b => {
+                    if (b !== block) {
+                        applyName(b, name);
+                    }
+                });
+                
+                // Mover focus al campo de comentario
+                const commentInput = form.querySelector('input[name="comment"], textarea[name="comment"]');
+                if (commentInput) {
+                    commentInput.focus();
+                }
+            }
+            return; // Salir, no enviar formulario
+        }
+        
+        // Manejar Enter en campo de comentario
+        if (!input.matches('input[name="comment"], textarea[name="comment"]')) return;
+        
         e.preventDefault();
         handleCommentSubmit(form);
     });

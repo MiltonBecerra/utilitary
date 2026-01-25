@@ -39,6 +39,94 @@
 [data-theme="dark"] .modal-backdrop.show {
     opacity: 0.75;
 }
+
+/* Dark mode for AdminLTE header and sidebar */
+[data-theme="dark"] .main-header {
+    background: #0f172a !important;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.2) !important;
+}
+
+[data-theme="dark"] .main-header .navbar-nav .nav-link {
+    color: #e2e8f0 !important;
+}
+
+[data-theme="dark"] .main-header .navbar-nav .nav-link:hover {
+    color: #93c5fd !important;
+    background: rgba(96, 165, 250, 0.1) !important;
+}
+
+[data-theme="dark"] .main-header .navbar-white {
+    background: #0f172a !important;
+}
+
+[data-theme="dark"] .main-sidebar {
+    background: #1a1f2a !important;
+}
+
+[data-theme="dark"] .sidebar-dark-primary {
+    background: #1a1f2a !important;
+}
+
+[data-theme="dark"] .sidebar-dark-primary .nav-sidebar .nav-link {
+    color: #cbd5f5 !important;
+}
+
+[data-theme="dark"] .sidebar-dark-primary .nav-sidebar .nav-link:hover {
+    background: rgba(96, 165, 250, 0.1) !important;
+    color: #93c5fd !important;
+}
+
+[data-theme="dark"] .sidebar-dark-primary .nav-sidebar .nav-link.active {
+    background: #3b82f6 !important;
+    color: #fff !important;
+}
+
+[data-theme="dark"] .brand-link {
+    background: #1a1f2a !important;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.2) !important;
+}
+
+[data-theme="dark"] .brand-text {
+    color: #e2e8f0 !important;
+}
+
+[data-theme="dark"] .nav-header {
+    color: #94a3b8 !important;
+    background: rgba(0, 0, 0, 0.1) !important;
+}
+
+[data-theme="dark"] .main-footer {
+    background: #1a1f2a !important;
+    color: #cbd5f5 !important;
+    border-top: 1px solid rgba(148, 163, 184, 0.2) !important;
+}
+
+[data-theme="dark"] .main-footer a {
+    color: #93c5fd !important;
+}
+
+[data-theme="dark"] .dropdown-menu {
+    background: #0f172a !important;
+    border: 1px solid rgba(148, 163, 184, 0.2) !important;
+}
+
+[data-theme="dark"] .dropdown-item {
+    color: #e2e8f0 !important;
+}
+
+[data-theme="dark"] .dropdown-item:hover {
+    background: rgba(96, 165, 250, 0.1) !important;
+    color: #93c5fd !important;
+}
+
+[data-theme="dark"] .user-header {
+    background: #3b82f6 !important;
+}
+
+[data-theme="dark"] .user-footer {
+    background: #111827 !important;
+    border-top: 1px solid rgba(148, 163, 184, 0.2) !important;
+}
 </style>
 </head>
 <body class="hold-transition sidebar-mini layout-fixed">

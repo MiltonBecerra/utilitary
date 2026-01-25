@@ -551,8 +551,16 @@
                                 <tbody>
                                 @forelse($alerts as $alert)
                                     <tr data-alert-id="{{ $alert->id }}">
-                                        @php
-                                            $displayPrice = $alert->price_type === 'cmr' ? $alert->cmr_price : $alert->public_price;
+@php
+                                            if ($alert->price_type === 'cmr') {
+                                                $displayPrice = $alert->cmr_price;
+                                                $priceUnavailable = $displayPrice === null;
+                                            } else {
+                                                $displayPrice = $alert->public_price;
+                                                $priceUnavailable = $displayPrice === null;
+                                            }
+                                            
+                                            // Fallback solo para mostrar algo, no para reemplazar precio específico
                                             if ($displayPrice === null) {
                                                 $displayPrice = $alert->current_price;
                                             }
@@ -578,7 +586,13 @@
                                         <td class="align-middle text-uppercase">
                                             <span class="badge badge-info">{{ $alert->store ?? '-' }}</span>
                                         </td>
-                                        <td class="align-middle text-nowrap">S/ {{ number_format($displayPrice, 2) }}</td>
+                                        <td class="align-middle text-nowrap">
+                                            @if($priceUnavailable)
+                                                <span class="text-muted">No disponible</span>
+                                            @else
+                                                S/ {{ number_format($displayPrice, 2) }}
+                                            @endif
+                                        </td>
                                         <td class="align-middle text-nowrap">{{ $alert->target_price ? 'S/ '.number_format($alert->target_price, 2) : '-' }}</td>
                                         <td class="align-middle">
                                             @php
@@ -634,7 +648,15 @@
                                         'triggered' => 'success',
                                         default => 'info',
                                     };
-                                    $displayPrice = $alert->price_type === 'cmr' ? $alert->cmr_price : $alert->public_price;
+if ($alert->price_type === 'cmr') {
+                                        $displayPrice = $alert->cmr_price;
+                                        $priceUnavailable = $displayPrice === null;
+                                    } else {
+                                        $displayPrice = $alert->public_price;
+                                        $priceUnavailable = $displayPrice === null;
+                                    }
+                                    
+                                    // Fallback solo para mostrar algo, no para reemplazar precio específico
                                     if ($displayPrice === null) {
                                         $displayPrice = $alert->current_price;
                                     }
@@ -652,7 +674,13 @@
                                         <div class="row mt-2">
                                             <div class="col-6">
                                                 <small class="text-muted d-block">Actual</small>
-                                                <div class="font-weight-bold">S/ {{ number_format($displayPrice, 2) }}</div>
+                                                <div class="font-weight-bold">
+                                                    @if($priceUnavailable)
+                                                        <span class="text-muted">No disponible</span>
+                                                    @else
+                                                        S/ {{ number_format($displayPrice, 2) }}
+                                                    @endif
+                                                </div>
                                             </div>
                                             <div class="col-6">
                                                 <small class="text-muted d-block">Objetivo</small>
@@ -791,6 +819,65 @@ document.addEventListener('DOMContentLoaded', function () {
     const cmrRadio = document.getElementById('price_cmr');
     const cardLabel = document.getElementById('priceCardLabel');
 
+    const checkCardPriceAvailability = async () => {
+        const val = (urlInput.value || '').toLowerCase();
+        const isRipley = val.includes('ripley');
+        
+        // Remover advertencias anteriores
+        const existingWarning = document.getElementById('card-price-warning');
+        if (existingWarning) {
+            existingWarning.remove();
+        }
+        
+        // Solo verificar para Ripley por ahora
+        if (!isRipley || val.trim() === '') {
+            return;
+        }
+        
+        try {
+            // Mostrar indicador de carga
+            const indicator = document.createElement('span');
+            indicator.id = 'card-price-checking';
+            indicator.className = 'text-muted small ml-2';
+            indicator.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Verificando precio de tarjeta...';
+            
+            if (cardLabel && !document.getElementById('card-price-checking')) {
+                cardLabel.parentNode.appendChild(indicator);
+            }
+            
+            // Pequeña demora para evitar demasiadas llamadas
+            await new Promise(resolve => setTimeout(resolve, 500));
+            
+            // Remover indicador
+            if (indicator) {
+                indicator.remove();
+            }
+            
+            // Verificación simple: si no hay elementos de precio tarjeta visibles, mostrar advertencia
+            if (cmrRadio && cmrRadio.checked) {
+                const warning = document.createElement('div');
+                warning.id = 'card-price-warning';
+                warning.className = 'alert alert-warning mt-2';
+                warning.innerHTML = `
+                    <i class="fas fa-exclamation-triangle"></i> 
+                    <strong>Atención:</strong> Este producto podría no tener precio con Tarjeta Ripley disponible. 
+                    Si al crear la alerta recibes un error, por favor selecciona "Precio Público".
+                `;
+                
+                if (group && !document.getElementById('card-price-warning')) {
+                    group.parentNode.insertBefore(warning, group.nextSibling);
+                }
+            }
+        } catch (error) {
+            console.log('No se pudo verificar disponibilidad de precio de tarjeta');
+            // Remover indicador en caso de error
+            const indicator = document.getElementById('card-price-checking');
+            if (indicator) {
+                indicator.remove();
+            }
+        }
+    };
+
     function togglePriceType() {
         const val = (urlInput.value || '').toLowerCase();
         const isFalabella = val.includes('falabella');
@@ -814,10 +901,21 @@ document.addEventListener('DOMContentLoaded', function () {
                     ? 'Precio Tarjeta Ripley'
                     : (isOechsle || isPromart ? 'Precio Tarjeta Oh' : (isSodimac ? 'Precio Única/CMR' : 'Precio CMR'));
             }
+            
+            // Verificar disponibilidad de precio de tarjeta para Ripley
+            if (isRipley) {
+                checkCardPriceAvailability();
+            }
         } else {
             group.classList.add('d-none');
             publicRadio.checked = true;
             cmrRadio.checked = false;
+            
+            // Limpiar advertencias al cambiar de URL
+            const existingWarning = document.getElementById('card-price-warning');
+            if (existingWarning) {
+                existingWarning.remove();
+            }
         }
     }
 
@@ -1040,6 +1138,17 @@ document.addEventListener('DOMContentLoaded', function () {
             contactPhone: btn.dataset.contactPhone,
         };
         enterEditMode(data);
+    });
+
+    // Event listener para cambios en tipo de precio
+    document.addEventListener('change', (event) => {
+        if (event.target && event.target.name === 'price_type') {
+            // Limpiar advertencia cuando el usuario cambia de tipo de precio
+            const existingWarning = document.getElementById('card-price-warning');
+            if (existingWarning) {
+                existingWarning.remove();
+            }
+        }
     });
     document.addEventListener('submit', async function (e) {
         const form = e.target;

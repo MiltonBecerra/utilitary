@@ -10,6 +10,7 @@ use App\Modules\Utilities\OfferAlerts\Services\OfferPriceScraperService;
 use App\Modules\Core\Services\GuestService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
 class OfferAlertController extends Controller
@@ -162,14 +163,13 @@ class OfferAlertController extends Controller
         $priceType = $request->price_type;
         $selectedPrice = $priceType === 'cmr' ? $cmrPrice : $publicPrice;
 
-        // Validación estricta mejorada: si el usuario quiere precio de tarjeta, debe existir y ser válido
+        // Validación mejorada para precio de tarjeta: menos estricta pero clara
         if ($priceType === 'cmr') {
-            // Validación más robusta: null, false, 0, o igual al precio público no son válidos
+            // Validación más flexible: solo null, false o valores inválidos básicos
             $isValidCardPrice = $cmrPrice !== null && 
                                $cmrPrice !== false && 
                                is_numeric($cmrPrice) && 
-                               $cmrPrice > 0 &&
-                               $cmrPrice != $publicPrice;
+                               $cmrPrice > 0;
                                 
             if (!$isValidCardPrice) {
                 $cardName = match ($store) {
@@ -177,17 +177,19 @@ class OfferAlertController extends Controller
                     'oechsle' => 'Tarjeta Oh',
                     'sodimac' => 'Única/CMR',
                     'promart' => 'Tarjeta Oh',
-                    default => 'CMR',
+                    default => 'Tarjeta',
                 };
                 
-                // Mensajes específicos por tienda y contexto mejorados
-                $errorMessage = match ($store) {
-                    'ripley' => "Este producto no tiene precio con Tarjeta Ripley disponible. Muchos productos en Ripley solo muestran precio público. Por favor, selecciona 'Precio Público' para monitorear este producto.",
-                    'oechsle' => "Este producto no tiene precio con Tarjeta Oh disponible. Oechsle suele ofrecer precios con tarjeta solo en productos seleccionados. Prueba con 'Precio Público'.",
-                    'sodimac' => "Este producto no tiene precio con Única/CMR disponible. Sodimac muestra precios con tarjeta en ciertos productos. Selecciona 'Precio Público' para continuar.",
-                    'promart' => "Este producto no tiene precio con Tarjeta Oh disponible. Promart ofrece precios con tarjeta en productos específicos. Usa 'Precio Público' para monitorear.",
-                    default => "Este producto no tiene precio con {$cardName} disponible. Por favor, selecciona 'Precio Público' para monitorear este producto.",
-                };
+                // Mensajes simples y directos
+                $errorMessage = "Sin precio tarjeta - Este producto no tiene precio con {$cardName} disponible. Selecciona 'Precio Público' para monitorear.";
+                
+                // Log para debugging de scraping
+                Log::info('card_price_validation_failed', [
+                    'store' => $store,
+                    'url' => $request->url,
+                    'cmr_price' => $cmrPrice,
+                    'public_price' => $publicPrice
+                ]);
                 
                 return back()
                     ->withErrors(['msg' => $errorMessage])
@@ -377,40 +379,6 @@ class OfferAlertController extends Controller
         }
 
         return redirect()->route('offer-alerts.index')->with('success', 'Alerta eliminada.');
-    }
-
-    /**
-     * Change price type from card to public via signed URL
-     */
-    public function changePriceType(Request $request, OfferAlert $offerAlert)
-    {
-        // Verify signed URL
-        if (!$request->hasValidSignature()) {
-            abort(403);
-        }
-
-        // Verify ownership
-        if (Auth::check()) {
-            abort_unless(Auth::id() === $offerAlert->user_id, 403);
-        } else {
-            $guestId = $this->guestService->getGuestId();
-            abort_unless($offerAlert->guest_id === $guestId, 403);
-        }
-
-        // Only allow changing from cmr to public
-        if ($offerAlert->price_type !== 'cmr') {
-            return back()->withErrors(['msg' => 'Esta alerta ya usa precio público.']);
-        }
-
-        // Update to public price type
-        $offerAlert->update([
-            'price_type' => 'public',
-            'current_price' => $offerAlert->public_price, // Use public price as current
-            'last_notified_price' => null, // Reset notification flag to allow new notifications
-        ]);
-
-        return redirect()->route('offer-alerts.index')
-            ->with('success', 'Alerta actualizada a precio público correctamente.');
     }
 
     private function errorResponse(Request $request, string $message, int $status = 422)
