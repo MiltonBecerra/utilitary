@@ -206,6 +206,9 @@
 [data-theme="dark"] .smc-selection-summary {
     background: rgba(15, 23, 42, 0.8);
 }
+.smc-selection-summary {
+    display: none;
+}
 .smc-saved-list .list-group-item {
     border: 1px solid var(--fx-border);
     border-radius: 12px;
@@ -357,7 +360,7 @@
                             <div class="form-group">
                                 <label>Productos (uno por linea)</label>
                                 <textarea name="queries" rows="4" class="form-control" placeholder="Ej: Leche Gloria 1L" required>{{ old('queries', $query ?? '') }}</textarea>
-                                <small class="text-muted">Puedes ingresar hasta 10 productos.</small>
+                                <small class="text-muted">Se procesan en bloques de 10 por solicitud.</small>
                             </div>
 
                             <div class="form-group">
@@ -378,6 +381,7 @@
                                         </div>
                                     @endforeach
                                 </div>
+                                <div class="smc-store-error text-danger small mt-2 d-none">Selecciona al menos un supermercado.</div>
                                 <small class="text-muted d-block mt-2">Free: 2 tiendas, Basic: 3 tiendas, Pro: todas + Tottus.</small>
                             </div>
 
@@ -387,6 +391,62 @@
                                 </button>
                             </div>
                         </form>
+                    </div>
+                </div>
+
+                <div class="card fx-card mb-3" id="smc-global-selection">
+                    <div class="card-header">
+                        <h3 class="card-title"><i class="fas fa-list-check mr-1"></i> Seleccion global</h3>
+                    </div>
+                    <div class="card-body">
+                        <div class="smc-global-empty text-muted">Selecciona productos para ver el resumen global.</div>
+                        <div class="smc-global-content d-none">
+                            <div class="d-flex align-items-center justify-content-between flex-wrap">
+                                <div class="font-weight-bold">Seleccionados: <span class="smc-global-count">0</span></div>
+                                <div class="text-muted small">
+                                    Total normal: S/ <span class="smc-global-total-normal">0.00</span> ·
+                                    Total tarjeta: S/ <span class="smc-global-total-card">0.00</span>
+                                </div>
+                            </div>
+                            <div class="table-responsive mt-2">
+                                <table class="table table-sm mb-0">
+                                    <thead>
+                                        <tr class="text-muted">
+                                            <th>Producto</th>
+                                            <th>Tienda</th>
+                                            <th class="text-right">Cantidad</th>
+                                            <th class="text-right">Precio</th>
+                                            <th class="text-right">Tarjeta</th>
+                                            <th class="text-right">Subtotal</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody class="smc-global-items-body"></tbody>
+                                </table>
+                            </div>
+                            <small class="text-muted d-block mt-2">Totales por tienda (normal y tarjeta).</small>
+                            <div class="table-responsive mt-2">
+                                <table class="table table-sm mb-0">
+                                    <thead>
+                                        <tr class="text-muted">
+                                            <th>Tienda</th>
+                                            <th class="text-right">Total normal</th>
+                                            <th class="text-right">Total tarjeta</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody class="smc-global-store-totals-body"></tbody>
+                                </table>
+                            </div>
+                            @if (empty($editingPurchase))
+                                <div class="mt-3">
+                                    <div class="d-flex align-items-center flex-wrap">
+                                        <input class="form-control form-control-sm mr-2 smc-purchase-name" type="text" maxlength="120" placeholder="Nombre de la compra (opcional)">
+                                        <button class="btn btn-sm btn-outline-primary smc-save-purchase" type="button">
+                                            <i class="fas fa-save mr-1"></i> Guardar compra
+                                        </button>
+                                    </div>
+                                </div>
+                            @endif
+                        </div>
                     </div>
                 </div>
 
@@ -534,49 +594,96 @@ document.addEventListener('DOMContentLoaded', function () {
         });
     }
 
-    const updateSelectionSummary = (wrapper) => {
-        if (!wrapper) return;
-        const selected = wrapper.querySelectorAll('.smc-select-item:checked');
-        const countEl = wrapper.querySelector('.smc-selected-count');
-        if (countEl) countEl.textContent = selected.length;
+    const globalSummary = document.getElementById('smc-global-selection');
+    const globalEmpty = globalSummary ? globalSummary.querySelector('.smc-global-empty') : null;
+    const globalContent = globalSummary ? globalSummary.querySelector('.smc-global-content') : null;
+    const globalCount = globalSummary ? globalSummary.querySelector('.smc-global-count') : null;
+    const globalTotalNormal = globalSummary ? globalSummary.querySelector('.smc-global-total-normal') : null;
+    const globalTotalCard = globalSummary ? globalSummary.querySelector('.smc-global-total-card') : null;
+    const globalItemsBody = globalSummary ? globalSummary.querySelector('.smc-global-items-body') : null;
+    const globalStoreTotalsBody = globalSummary ? globalSummary.querySelector('.smc-global-store-totals-body') : null;
 
-        const totals = {};
-        selected.forEach((checkbox) => {
+    const updateGlobalSelectionSummary = () => {
+        if (!globalSummary || !resultsWrap) return;
+        const selections = Array.from(resultsWrap.querySelectorAll('.smc-select-item:checked'));
+        if (globalItemsBody) globalItemsBody.innerHTML = '';
+        if (globalStoreTotalsBody) globalStoreTotalsBody.innerHTML = '';
+
+        if (!selections.length) {
+            if (globalEmpty) globalEmpty.classList.remove('d-none');
+            if (globalContent) globalContent.classList.add('d-none');
+            if (globalCount) globalCount.textContent = '0';
+            if (globalTotalNormal) globalTotalNormal.textContent = '0.00';
+            if (globalTotalCard) globalTotalCard.textContent = '0.00';
+            return;
+        }
+
+        if (globalEmpty) globalEmpty.classList.add('d-none');
+        if (globalContent) globalContent.classList.remove('d-none');
+
+        let totalNormal = 0;
+        let totalCard = 0;
+        const storeTotals = {};
+
+        selections.forEach((checkbox) => {
             const row = checkbox.closest('tr');
             const qtyInput = row ? row.querySelector('.smc-qty') : null;
+            const unitSelect = row ? row.querySelector('.smc-unit') : null;
             const qty = parseFloat(qtyInput?.value || '1') || 1;
+            const unit = unitSelect?.value || 'un';
             const price = parseFloat(checkbox.dataset.price || '0') || 0;
             const cardPrice = parseFloat(checkbox.dataset.cardPrice || '0') || 0;
+            const effectiveCard = cardPrice > 0 ? cardPrice : price;
             const storeLabel = (checkbox.dataset.storeLabel || checkbox.dataset.store || 'OTROS').toString();
-            const key = storeLabel.toUpperCase();
-            if (!totals[key]) totals[key] = { normal: 0, card: 0 };
-            totals[key].normal += price * qty;
-            totals[key].card += (cardPrice > 0 ? cardPrice : price) * qty;
+            const storeKey = storeLabel.toUpperCase();
+            const title = (checkbox.dataset.title || '').toString();
+            const lineNormal = price * qty;
+            const lineCard = effectiveCard * qty;
+
+            totalNormal += lineNormal;
+            totalCard += lineCard;
+            if (!storeTotals[storeKey]) storeTotals[storeKey] = { normal: 0, card: 0 };
+            storeTotals[storeKey].normal += lineNormal;
+            storeTotals[storeKey].card += lineCard;
+
+            if (globalItemsBody) {
+                const itemRow = document.createElement('tr');
+                itemRow.innerHTML = `
+                    <td>${title || '-'}</td>
+                    <td class="text-uppercase">${storeKey}</td>
+                    <td class="text-right">${qty} ${unit}</td>
+                    <td class="text-right">S/ ${price.toFixed(2)}</td>
+                    <td class="text-right">${cardPrice > 0 ? `S/ ${cardPrice.toFixed(2)}` : '-'}</td>
+                    <td class="text-right">S/ ${lineCard.toFixed(2)}</td>
+                `;
+                globalItemsBody.appendChild(itemRow);
+            }
         });
 
-        const tbody = wrapper.querySelector('.smc-store-totals-body');
-        if (!tbody) return;
-        tbody.innerHTML = '';
-        Object.keys(totals).forEach((store) => {
-            const row = document.createElement('tr');
-            row.innerHTML = `
-                <td>${store}</td>
-                <td class="text-right">S/ ${totals[store].normal.toFixed(2)}</td>
-                <td class="text-right">S/ ${totals[store].card.toFixed(2)}</td>
-            `;
-            tbody.appendChild(row);
-        });
-        if (!Object.keys(totals).length) {
-            const emptyRow = document.createElement('tr');
-            emptyRow.innerHTML = '<td colspan="3" class="text-muted">Sin seleccion</td>';
-            tbody.appendChild(emptyRow);
+        if (globalCount) globalCount.textContent = selections.length.toString();
+        if (globalTotalNormal) globalTotalNormal.textContent = totalNormal.toFixed(2);
+        if (globalTotalCard) globalTotalCard.textContent = totalCard.toFixed(2);
+
+        if (globalStoreTotalsBody) {
+            Object.keys(storeTotals).forEach((store) => {
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td>${store}</td>
+                    <td class="text-right">S/ ${storeTotals[store].normal.toFixed(2)}</td>
+                    <td class="text-right">S/ ${storeTotals[store].card.toFixed(2)}</td>
+                `;
+                globalStoreTotalsBody.appendChild(row);
+            });
+            if (!Object.keys(storeTotals).length) {
+                const emptyRow = document.createElement('tr');
+                emptyRow.innerHTML = '<td colspan="3" class="text-muted">Sin seleccion</td>';
+                globalStoreTotalsBody.appendChild(emptyRow);
+            }
         }
     };
 
-    const refreshSelections = (scope) => {
-        (scope || document).querySelectorAll('.smc-selection-wrapper').forEach((wrapper) => {
-            updateSelectionSummary(wrapper);
-        });
+    const refreshSelections = () => {
+        updateGlobalSelectionSummary();
     };
 
     const fetchForm = async (form, target) => {
@@ -594,7 +701,7 @@ document.addEventListener('DOMContentLoaded', function () {
             const data = await res.json();
             if (data && data.html && target) {
                 target.innerHTML = data.html;
-                refreshSelections(target);
+                refreshSelections();
             }
         } catch (error) {
             console.error(error);
@@ -604,11 +711,118 @@ document.addEventListener('DOMContentLoaded', function () {
         }
     };
 
+    const parseQueryLines = (raw) => {
+        if (!raw) return [];
+        const normalized = raw.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+        return normalized.split('\n').map((line) => line.trim()).filter((line) => line !== '');
+    };
+
+    const chunkLines = (lines, size) => {
+        const chunks = [];
+        for (let i = 0; i < lines.length; i += size) {
+            chunks.push(lines.slice(i, i + size));
+        }
+        return chunks;
+    };
+
+    const appendHtml = (target, html, beforeNode) => {
+        const temp = document.createElement('div');
+        temp.innerHTML = html;
+        while (temp.firstChild) {
+            if (beforeNode && beforeNode.parentNode === target) {
+                target.insertBefore(temp.firstChild, beforeNode);
+            } else {
+                target.appendChild(temp.firstChild);
+            }
+        }
+    };
+
+    const submitInBatches = async (form, target) => {
+        const action = form.getAttribute('action');
+        if (!action) return;
+        if (form.dataset.smcBusy === 'true') return;
+        form.dataset.smcBusy = 'true';
+
+        const textarea = form.querySelector('textarea[name="queries"]');
+        const lines = parseQueryLines(textarea ? textarea.value : '');
+        if (!lines.length) {
+            form.dataset.smcBusy = 'false';
+            form.submit();
+            return;
+        }
+
+        const chunks = chunkLines(lines, 10);
+        const submitBtn = form.querySelector('button[type="submit"]');
+        const submitLabel = submitBtn ? submitBtn.innerHTML : '';
+        if (submitBtn) submitBtn.disabled = true;
+
+        target.innerHTML = '';
+        const progress = document.createElement('div');
+        progress.className = 'fx-empty';
+        progress.textContent = `Procesando 0/${chunks.length} bloques...`;
+        target.appendChild(progress);
+
+        try {
+            if (typeof showLoader === 'function') showLoader();
+
+            for (let i = 0; i < chunks.length; i++) {
+                const formData = new FormData(form);
+                formData.set('queries', chunks[i].join('\n'));
+
+                const res = await fetch(action, {
+                    method: 'POST',
+                    headers: { 'Accept': 'application/json' },
+                    body: formData,
+                });
+
+                if (!res.ok) {
+                    let message = 'Error en la solicitud';
+                    try {
+                        const payload = await res.json();
+                        if (payload && payload.message) message = payload.message;
+                    } catch (e) {
+                        // ignore json parse errors
+                    }
+                    throw new Error(message);
+                }
+
+                const data = await res.json();
+                if (data && data.html) {
+                    appendHtml(target, data.html, progress);
+                    refreshSelections();
+                }
+                progress.textContent = `Procesando ${i + 1}/${chunks.length} bloques...`;
+            }
+
+            progress.textContent = 'Listo.';
+            setTimeout(() => {
+                if (progress.parentNode) progress.parentNode.removeChild(progress);
+            }, 1200);
+        } catch (error) {
+            console.error(error);
+            alert(error.message || 'No se pudo completar el procesamiento por bloques.');
+        } finally {
+            if (typeof hideLoader === 'function') hideLoader();
+            if (submitBtn) submitBtn.disabled = false;
+            if (submitBtn && submitLabel) submitBtn.innerHTML = submitLabel;
+            form.dataset.smcBusy = 'false';
+        }
+    };
+
     if (searchForm && resultsWrap) {
         searchForm.addEventListener('submit', function (e) {
             if (searchForm.dataset.async !== 'true') return;
+            const storeError = searchForm.querySelector('.smc-store-error');
+            const selectedStores = searchForm.querySelectorAll('input[name="stores[]"]:checked');
+            if (!selectedStores.length) {
+                e.preventDefault();
+                if (storeError) storeError.classList.remove('d-none');
+                alert('Selecciona al menos un supermercado.');
+                return;
+            }
+            if (storeError) storeError.classList.add('d-none');
             e.preventDefault();
-            fetchForm(searchForm, resultsWrap);
+            submitInBatches(searchForm, resultsWrap);
         });
     }
 
@@ -622,9 +836,11 @@ document.addEventListener('DOMContentLoaded', function () {
     });
 
     const retrySearch = async (button) => {
+        if (button.dataset.smcBusy === 'true') return;
         const query = (button.dataset.query || '').trim();
         if (!query) return;
         const card = button.closest('.smc-result-card');
+        const contextToken = (button.dataset.contextToken || (card ? card.dataset.contextToken : '') || '').toString();
         const storeList = (button.dataset.stores || '').split(',').map((s) => s.trim()).filter((s) => s !== '');
         const stores = storeList.length
             ? storeList
@@ -633,9 +849,11 @@ document.addEventListener('DOMContentLoaded', function () {
         const formData = new FormData();
         formData.append('query', query);
         stores.forEach((store) => formData.append('stores[]', store));
+        if (contextToken) formData.append('context_token', contextToken);
         if (purchaseUuid) formData.append('purchase_uuid', purchaseUuid);
 
         try {
+            button.dataset.smcBusy = 'true';
             button.disabled = true;
             if (typeof showLoader === 'function') showLoader();
             const res = await fetch("{{ url('/supermarket-comparator/retry-search') }}", {
@@ -646,7 +864,16 @@ document.addEventListener('DOMContentLoaded', function () {
                 },
                 body: formData,
             });
-            if (!res.ok) throw new Error('Error al reintentar');
+            if (!res.ok) {
+                let message = 'Error al reintentar';
+                try {
+                    const payload = await res.json();
+                    if (payload && payload.message) message = payload.message;
+                } catch (e) {
+                    // ignore json parse errors
+                }
+                throw new Error(message);
+            }
             const data = await res.json();
             if (data && data.html && card) {
                 card.outerHTML = data.html;
@@ -656,6 +883,7 @@ document.addEventListener('DOMContentLoaded', function () {
             alert('No se pudo reintentar el scrapeo. Intenta nuevamente.');
         } finally {
             button.disabled = false;
+            button.dataset.smcBusy = 'false';
             if (typeof hideLoader === 'function') hideLoader();
         }
     };
@@ -668,9 +896,10 @@ document.addEventListener('DOMContentLoaded', function () {
         retrySearch(btn);
     });
 
-    const collectSelectedItems = (wrapper) => {
+    const collectSelectedItems = (scope) => {
+        const root = scope || resultsWrap || document;
         const items = [];
-        wrapper.querySelectorAll('.smc-select-item:checked').forEach((checkbox) => {
+        root.querySelectorAll('.smc-select-item:checked').forEach((checkbox) => {
             const row = checkbox.closest('tr');
             const qtyInput = row ? row.querySelector('.smc-qty') : null;
             const unitSelect = row ? row.querySelector('.smc-unit') : null;
@@ -689,12 +918,14 @@ document.addEventListener('DOMContentLoaded', function () {
         return items;
     };
 
-    const showSaveFeedback = (wrapper, message, isError) => {
-        let alert = wrapper.querySelector('.smc-save-feedback');
+    const showSaveFeedback = (container, message, isError) => {
+        if (!container) return;
+        let alert = container.querySelector('.smc-save-feedback');
         if (!alert) {
             alert = document.createElement('div');
             alert.className = 'smc-save-feedback alert mt-2';
-            wrapper.prepend(alert);
+            const target = container.querySelector('.smc-global-content') || container;
+            target.prepend(alert);
         }
         alert.classList.remove('alert-success', 'alert-danger');
         alert.classList.add(isError ? 'alert-danger' : 'alert-success');
@@ -704,14 +935,13 @@ document.addEventListener('DOMContentLoaded', function () {
     document.addEventListener('click', async function (e) {
         const btn = e.target.closest('.smc-save-purchase');
         if (!btn) return;
-        const wrapper = btn.closest('.smc-selection-wrapper');
-        if (!wrapper) return;
-        const items = collectSelectedItems(wrapper);
+        const summary = document.getElementById('smc-global-selection');
+        const items = collectSelectedItems(resultsWrap || summary);
         if (!items.length) {
-            showSaveFeedback(wrapper, 'Selecciona al menos un producto para guardar.', true);
+            showSaveFeedback(summary, 'Selecciona al menos un producto para guardar.', true);
             return;
         }
-        const nameInput = wrapper.querySelector('.smc-purchase-name');
+        const nameInput = summary ? summary.querySelector('.smc-purchase-name') : null;
         const queryText = document.querySelector('textarea[name="queries"]')?.value || '';
         const stores = Array.from(document.querySelectorAll('input[name="stores[]"]:checked')).map((el) => el.value);
         try {
@@ -733,7 +963,7 @@ document.addEventListener('DOMContentLoaded', function () {
             });
             if (!res.ok) throw new Error('No se pudo guardar la compra');
             const data = await res.json();
-            showSaveFeedback(wrapper, 'Compra guardada correctamente.', false);
+            showSaveFeedback(summary, 'Compra guardada correctamente.', false);
             if (data && data.purchase && data.purchase.url) {
                 const list = document.getElementById('smc-saved-purchases');
                 if (list) {
@@ -758,7 +988,7 @@ document.addEventListener('DOMContentLoaded', function () {
             }
         } catch (error) {
             console.error(error);
-            showSaveFeedback(wrapper, 'No se pudo guardar la compra. Intenta nuevamente.', true);
+            showSaveFeedback(summary, 'No se pudo guardar la compra. Intenta nuevamente.', true);
         } finally {
             btn.disabled = false;
             if (typeof hideLoader === 'function') hideLoader();
@@ -767,14 +997,14 @@ document.addEventListener('DOMContentLoaded', function () {
 
     if (resultsWrap) {
         resultsWrap.addEventListener('change', function (e) {
-            if (!e.target.closest('.smc-selection-wrapper')) return;
-            updateSelectionSummary(e.target.closest('.smc-selection-wrapper'));
+            if (!e.target.closest('.smc-selection-scope') && !e.target.classList.contains('smc-select-item')) return;
+            updateGlobalSelectionSummary();
         });
         resultsWrap.addEventListener('input', function (e) {
-            if (!e.target.closest('.smc-selection-wrapper')) return;
-            updateSelectionSummary(e.target.closest('.smc-selection-wrapper'));
+            if (!e.target.closest('.smc-selection-scope')) return;
+            updateGlobalSelectionSummary();
         });
-        refreshSelections(resultsWrap);
+        refreshSelections();
     }
 });
 </script>

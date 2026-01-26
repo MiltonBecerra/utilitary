@@ -147,6 +147,8 @@ class MetroClient implements StoreClientInterface, AsyncStoreClientInterface
             $price = isset($offer['Price']) ? (float) $offer['Price'] : null;
             $listPrice = isset($offer['ListPrice']) ? (float) $offer['ListPrice'] : null;
             $availableQty = isset($offer['AvailableQuantity']) ? (float) $offer['AvailableQuantity'] : null;
+            $cardPrice = null;
+            $cardLabel = null;
 
             $inStock = $availableQty === null ? true : ($availableQty > 0);
             $promoText = null;
@@ -166,12 +168,18 @@ class MetroClient implements StoreClientInterface, AsyncStoreClientInterface
                 }
             }
 
+            if (is_array($offer)) {
+                [$cardPrice, $cardLabel] = $this->extractCardPriceFromOffer($offer);
+            }
+
             $items[] = [
                 'title' => $title,
                 'brand' => is_string($brand) ? $brand : null,
                 'variant' => $variant,
                 'audience' => null,
                 'price' => $price,
+                'card_price' => $cardPrice,
+                'card_label' => $cardLabel,
                 'promo_text' => $promoText,
                 'in_stock' => $inStock,
                 'url' => is_string($link) && Str::startsWith($link, 'http') ? $link : ($link ? $baseUrl . $link : null),
@@ -181,6 +189,102 @@ class MetroClient implements StoreClientInterface, AsyncStoreClientInterface
         }
 
         return $items;
+    }
+
+    private function extractCardPriceFromOffer(array $offer): array
+    {
+        $candidates = [];
+        $basePrice = $this->parseNumeric($offer['Price'] ?? null);
+        $priceWithoutDiscount = $this->parseNumeric($offer['PriceWithoutDiscount'] ?? null);
+
+        if ($basePrice !== null && is_array($offer['teasers'] ?? null) && !empty($offer['teasers'])) {
+            foreach ($offer['teasers'] as $teaser) {
+                if (!is_array($teaser)) {
+                    continue;
+                }
+
+                $name = isset($teaser['name']) && is_string($teaser['name']) ? $teaser['name'] : '';
+                if ($name === '' || !preg_match('/(tcenco|cencosud|tarjeta|card|cmr|oh)/i', $name)) {
+                    continue;
+                }
+
+                $effects = is_array($teaser['effects'] ?? null) ? $teaser['effects'] : null;
+                $params = is_array($effects['parameters'] ?? null) ? $effects['parameters'] : null;
+                if (!is_array($params)) {
+                    continue;
+                }
+
+                $percent = null;
+                $promoDiscount = null;
+                foreach ($params as $p) {
+                    if (!is_array($p)) {
+                        continue;
+                    }
+                    $paramName = $p['name'] ?? null;
+                    $value = $p['value'] ?? null;
+                    if ($paramName === 'PercentualDiscount') {
+                        $percent = $this->parseNumeric($value);
+                    } elseif ($paramName === 'PromotionalPriceTableItemsDiscount') {
+                        $promoDiscount = $this->parseNumeric($value);
+                    }
+                }
+
+                if ($promoDiscount !== null && ($priceWithoutDiscount ?? $basePrice) !== null) {
+                    $source = $priceWithoutDiscount ?? $basePrice;
+                    $candidate = $source - $promoDiscount;
+                    if ($candidate > 0 && $candidate < 50000) {
+                        $candidates[] = ['price' => $candidate, 'label' => $this->extractCardLabel($name)];
+                        continue;
+                    }
+                }
+
+                if ($percent !== null && $basePrice !== null && $percent > 0 && $percent < 100) {
+                    $candidate = $basePrice * (1.0 - ($percent / 100.0));
+                    if ($candidate > 0 && $candidate < 50000) {
+                        $candidates[] = ['price' => $candidate, 'label' => $this->extractCardLabel($name)];
+                    }
+                }
+            }
+        }
+
+        if (empty($candidates)) {
+            return [null, null];
+        }
+
+        usort($candidates, fn ($a, $b) => ($a['price'] <=> $b['price']));
+        return [(float) $candidates[0]['price'], (string) $candidates[0]['label']];
+    }
+
+    private function extractCardLabel(string $name): string
+    {
+        $lname = mb_strtolower($name);
+        if (str_contains($lname, 'cencosud') || str_contains($lname, 'tcenco')) {
+            return 'Cencosud';
+        }
+        if (str_contains($lname, 'cmr')) {
+            return 'CMR';
+        }
+        if (str_contains($lname, 'oh')) {
+            return 'OH!';
+        }
+        if (str_contains($lname, 'tarjeta')) {
+            return 'Tarjeta';
+        }
+        return 'Tarjeta';
+    }
+
+    private function parseNumeric($value): ?float
+    {
+        if (is_numeric($value)) {
+            return (float) $value;
+        }
+        if (is_string($value)) {
+            $clean = trim(str_replace([',', ' '], ['.', ''], $value));
+            if (is_numeric($clean)) {
+                return (float) $clean;
+            }
+        }
+        return null;
     }
 }
 
