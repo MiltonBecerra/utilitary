@@ -141,8 +141,9 @@ class MetroClient implements StoreClientInterface, AsyncStoreClientInterface
                     $imageUrl = $img0['imageUrl'];
                 }
             }
-            $firstSeller = is_array($firstItem['sellers'] ?? null) ? ($firstItem['sellers'][0] ?? null) : null;
-            $offer = is_array($firstSeller['commertialOffer'] ?? null) ? ($firstSeller['commertialOffer'] ?? null) : null;
+            $sellerOffer = $this->selectSellerOffer(is_array($firstItem['sellers'] ?? null) ? $firstItem['sellers'] : []);
+            $firstSeller = $sellerOffer['seller'] ?? null;
+            $offer = $sellerOffer['offer'] ?? null;
 
             $price = isset($offer['Price']) ? (float) $offer['Price'] : null;
             $listPrice = isset($offer['ListPrice']) ? (float) $offer['ListPrice'] : null;
@@ -191,6 +192,49 @@ class MetroClient implements StoreClientInterface, AsyncStoreClientInterface
         return $items;
     }
 
+    /**
+     * @param array $sellers
+     * @return array{seller: array|null, offer: array|null}
+     */
+    private function selectSellerOffer(array $sellers): array
+    {
+        $fallbackSeller = null;
+        $fallbackOffer = null;
+        $bestSeller = null;
+        $bestOffer = null;
+
+        foreach ($sellers as $seller) {
+            if (!is_array($seller)) {
+                continue;
+            }
+            $offer = is_array($seller['commertialOffer'] ?? null) ? $seller['commertialOffer'] : null;
+            if ($fallbackSeller === null) {
+                $fallbackSeller = $seller;
+                $fallbackOffer = $offer;
+            }
+            if (!is_array($offer)) {
+                continue;
+            }
+            $price = $this->parseNumeric($offer['Price'] ?? null);
+            $available = $this->parseNumeric($offer['AvailableQuantity'] ?? null);
+            if ($price !== null && $price > 0 && ($available === null || $available > 0)) {
+                $bestSeller = $seller;
+                $bestOffer = $offer;
+                break;
+            }
+            if ($bestOffer === null && $price !== null && $price > 0) {
+                $bestSeller = $seller;
+                $bestOffer = $offer;
+            }
+        }
+
+        if ($bestOffer !== null) {
+            return ['seller' => $bestSeller, 'offer' => $bestOffer];
+        }
+
+        return ['seller' => $fallbackSeller, 'offer' => $fallbackOffer];
+    }
+
     private function extractCardPriceFromOffer(array $offer): array
     {
         $candidates = [];
@@ -216,6 +260,7 @@ class MetroClient implements StoreClientInterface, AsyncStoreClientInterface
 
                 $percent = null;
                 $promoDiscount = null;
+                $directPrice = null;
                 foreach ($params as $p) {
                     if (!is_array($p)) {
                         continue;
@@ -227,6 +272,10 @@ class MetroClient implements StoreClientInterface, AsyncStoreClientInterface
                     } elseif ($paramName === 'PromotionalPriceTableItemsDiscount') {
                         $promoDiscount = $this->parseNumeric($value);
                     }
+                }
+
+                if ($percent === null && $promoDiscount === null) {
+                    $directPrice = $this->extractDirectPriceFromName($name);
                 }
 
                 if ($promoDiscount !== null && ($priceWithoutDiscount ?? $basePrice) !== null) {
@@ -244,6 +293,12 @@ class MetroClient implements StoreClientInterface, AsyncStoreClientInterface
                         $candidates[] = ['price' => $candidate, 'label' => $this->extractCardLabel($name)];
                     }
                 }
+
+                if ($directPrice !== null && $basePrice !== null) {
+                    if ($directPrice > 0 && $directPrice < $basePrice) {
+                        $candidates[] = ['price' => $directPrice, 'label' => $this->extractCardLabel($name)];
+                    }
+                }
             }
         }
 
@@ -253,6 +308,15 @@ class MetroClient implements StoreClientInterface, AsyncStoreClientInterface
 
         usort($candidates, fn ($a, $b) => ($a['price'] <=> $b['price']));
         return [(float) $candidates[0]['price'], (string) $candidates[0]['label']];
+    }
+
+    private function extractDirectPriceFromName(string $name): ?float
+    {
+        $lower = mb_strtolower($name);
+        if (!preg_match('/\ba\s*(\d+(?:[\.,]\d{1,2})?)\b/', $lower, $matches)) {
+            return null;
+        }
+        return $this->parseNumeric($matches[1]);
     }
 
     private function extractCardLabel(string $name): string
