@@ -91,8 +91,8 @@ class SupermarketComparatorController extends Controller
             'queries' => 'nullable|string|max:2000',
             // backward compat si alguien manda "query"
             'query' => 'nullable|string|max:120',
-            'stores' => 'nullable|array|min:1|max:10',
-            'stores.*' => 'string|max:30',
+            'stores' => 'required|array|min:1|max:10',
+            'stores.*' => 'string|in:plaza_vea,tottus,metro,wong',
         ]);
 
         if (!Auth::check() && !$this->guestService->hasAcceptedTerms()) {
@@ -175,8 +175,9 @@ class SupermarketComparatorController extends Controller
     {
         $validated = $request->validate([
             'query' => 'required|string|max:2000',
-            'stores' => 'nullable|array|min:1|max:10',
-            'stores.*' => 'string|max:30',
+            'context_token' => 'nullable|string|max:80',
+            'stores' => 'required|array|min:1|max:10',
+            'stores.*' => 'string|in:plaza_vea,tottus,metro,wong',
         ]);
 
         if (!Auth::check() && !$this->guestService->hasAcceptedTerms()) {
@@ -186,6 +187,7 @@ class SupermarketComparatorController extends Controller
 
         $query = trim((string) $validated['query']);
         $stores = $validated['stores'] ?? null;
+        $contextToken = trim((string) ($validated['context_token'] ?? ''));
         $location = '';
 
         $utility = $this->utility();
@@ -193,6 +195,51 @@ class SupermarketComparatorController extends Controller
         $this->enforceStoreLimits($stores, $plan);
 
         $result = $this->comparator->phase1Search($query, $location, $stores);
+        if ($contextToken !== '') {
+            $context = Cache::get($this->contextKey($contextToken));
+            if (is_array($context)) {
+                $mergedCandidates = is_array($context['candidates'] ?? null) ? $context['candidates'] : [];
+                foreach (($result['candidates'] ?? []) as $storeCode => $items) {
+                    $mergedCandidates[$storeCode] = $items;
+                }
+
+                $mergedErrors = is_array($context['errors'] ?? null) ? $context['errors'] : [];
+                if (is_array($stores) && !empty($stores)) {
+                    $storeNameMap = $this->storeNameMap();
+                    foreach ($stores as $code) {
+                        $code = strtolower((string) $code);
+                        $name = $storeNameMap[$code] ?? null;
+                        if ($name && array_key_exists($name, $mergedErrors)) {
+                            unset($mergedErrors[$name]);
+                        }
+                    }
+                }
+                foreach (($result['errors'] ?? []) as $store => $msg) {
+                    $mergedErrors[$store] = $msg;
+                }
+
+                $context['candidates'] = $mergedCandidates;
+                $context['errors'] = $mergedErrors;
+                Cache::put($this->contextKey($contextToken), $context, now()->addMinutes(30));
+
+                $contextAmbiguity = is_array($context['ambiguity'] ?? null) ? $context['ambiguity'] : [];
+                $result = [
+                    'context_token' => $contextToken,
+                    'query' => $context['query'] ?? $query,
+                    'location' => $context['location'] ?? $location,
+                    'suggested_refinement' => $context['suggested_refinement'] ?? ($result['suggested_refinement'] ?? []),
+                    'ambiguity' => $contextAmbiguity ?: ($result['ambiguity'] ?? ['is_ambiguous' => false, 'reasons' => []]),
+                    'needs_refinement' => (bool) ($contextAmbiguity['is_ambiguous'] ?? ($result['needs_refinement'] ?? false)),
+                    'candidates' => $mergedCandidates,
+                    'errors' => $mergedErrors,
+                    'error_store_codes' => $this->errorStoreCodesFromErrors($mergedErrors),
+                ];
+            }
+        }
+
+        if ($contextToken !== '' && empty($result['context_token'])) {
+            $result['context_token'] = $contextToken;
+        }
         $editingPurchase = $this->resolveEditPurchase($request);
 
         $html = view('modules.supermarket_comparator.partials.result_card', [
@@ -486,6 +533,9 @@ class SupermarketComparatorController extends Controller
         }
         $location = $purchaseModel->location ?? '';
         $stores = is_array($purchaseModel->stores ?? null) ? $purchaseModel->stores : null;
+        if (empty($stores)) {
+            abort(422, 'Selecciona al menos un supermercado para comparar.');
+        }
 
         $utility = $this->utility();
         $plan = $this->resolvePlan($utility);
@@ -673,6 +723,34 @@ class SupermarketComparatorController extends Controller
 
         $guestId = $this->guestService->getGuestId();
         return "smc_daily_products:guest:{$guestId}:{$slug}:{$date}";
+    }
+
+    private function contextKey(string $token): string
+    {
+        return 'smc:ctx:' . $token;
+    }
+
+    private function storeNameMap(): array
+    {
+        return [
+            'plaza_vea' => 'Plaza Vea',
+            'tottus' => 'Tottus',
+            'metro' => 'Metro',
+            'wong' => 'Wong',
+        ];
+    }
+
+    private function errorStoreCodesFromErrors(array $errors): array
+    {
+        $nameToCode = array_flip($this->storeNameMap());
+        $codes = [];
+        foreach (array_keys($errors) as $storeName) {
+            $code = $nameToCode[$storeName] ?? null;
+            if ($code) {
+                $codes[] = $code;
+            }
+        }
+        return array_values(array_unique($codes));
     }
 }
 

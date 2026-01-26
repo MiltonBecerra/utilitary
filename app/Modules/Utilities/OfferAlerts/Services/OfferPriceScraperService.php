@@ -659,7 +659,6 @@ class OfferPriceScraperService
             } elseif (preg_match('/skuId["\']?:["\']?(\d+)["\']?/', $html, $matches)) {
                 $skuId = $matches[1];
             }
-
             if ($skuId) {
                 // Llamar a la API de VTEX
                 // sc=2 es canal de ventas online usual

@@ -34,7 +34,7 @@
         @if (array_sum($storeCounts) === 0 && empty($r['errors'] ?? []))
             <div class="callout callout-warning">
                 <div class="font-weight-bold mb-1">No se encontraron productos</div>
-                <div class="text-muted">Prueba con una bÇ§squeda mÇ­s corta (ej: marca + producto + tamaÇño) o sin detalles extra.</div>
+                <div class="text-muted">Prueba con una búsqueda más corta (ej: marca + producto + tamaño) o sin detalles extra.</div>
             </div>
         @endif
 
@@ -46,7 +46,7 @@
                         <li><strong>{{ $store }}:</strong> {{ $msg }}</li>
                     @endforeach
                 </ul>
-                <button class="btn btn-sm btn-outline-warning mt-2 smc-retry-search" type="button" data-query="{{ $q }}" data-stores="{{ implode(',', $errorStores) }}" onclick="window.smcRetrySearch && window.smcRetrySearch(this)">
+                <button class="btn btn-sm btn-outline-warning mt-2 smc-retry-search" type="button" data-query="{{ $q }}" data-stores="{{ implode(',', $errorStores) }}" data-context-token="{{ $ctx }}">
                     <i class="fas fa-sync-alt mr-1"></i> Reintentar scrapeo
                 </button>
             </div>
@@ -54,7 +54,7 @@
 
         @if ($needsRefine && !empty($r['ambiguity']['reasons'] ?? []))
             <div class="callout callout-info">
-                <p class="mb-1"><strong>La bÇ§squeda es ambigua</strong> y no se compararÇ­ directamente.</p>
+                <p class="mb-1"><strong>La búsqueda es ambigua</strong> y no se comparará directamente.</p>
                 <ul class="mb-0">
                     @foreach (($r['ambiguity']['reasons'] ?? []) as $reason)
                         <li>{{ $reason }}</li>
@@ -75,7 +75,7 @@
                     <input type="text" class="form-control" name="brand" value="{{ (string) ($suggested['brand'] ?? '') }}" placeholder="Ej: Gloria">
                 </div>
                 <div class="form-group col-md-6">
-                    <label>TamaÇño / PresentaciÇün (opcional)</label>
+                    <label>Tamaño / Presentación (opcional)</label>
                     <input type="text" class="form-control" name="size" value="{{ (string) ($suggested['size'] ?? '') }}" placeholder="Ej: 1 L, 900 g, 6x330 ml">
                 </div>
             </div>
@@ -85,15 +85,15 @@
                     <input type="text" class="form-control" name="variant" value="{{ (string) ($suggested['variant'] ?? '') }}" placeholder="Ej: descremada, light, original">
                 </div>
                 <div class="form-group col-md-6">
-                    <label>PÇ§blico objetivo (opcional)</label>
-                    <input type="text" class="form-control" name="audience" value="{{ (string) ($suggested['audience'] ?? '') }}" placeholder="Ej: bebÇ¸, adulto, mascota">
+                    <label>Público objetivo (opcional)</label>
+                    <input type="text" class="form-control" name="audience" value="{{ (string) ($suggested['audience'] ?? '') }}" placeholder="Ej: bebé, adulto, mascota">
                 </div>
             </div>
             <div class="form-group mb-0">
                 <div class="custom-control custom-checkbox">
                     <input type="hidden" name="allow_similar" value="0">
                     <input class="custom-control-input" type="checkbox" id="allow_similar_{{ $ctx }}" name="allow_similar" value="1" checked>
-                    <label class="custom-control-label" for="allow_similar_{{ $ctx }}">Incluir ƒ?oSimilaresƒ?? como alternativas</label>
+                    <label class="custom-control-label" for="allow_similar_{{ $ctx }}">Incluir “Similares” como alternativas</label>
                 </div>
             </div>
             <hr>

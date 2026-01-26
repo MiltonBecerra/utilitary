@@ -693,6 +693,12 @@ class PlazaVeaClient implements StoreClientInterface
                     $imageUrl = $img0['imageUrl'];
                 }
             }
+            $unitMultiplier = is_array($firstItem) && is_numeric($firstItem['unitMultiplier'] ?? null)
+                ? (float) $firstItem['unitMultiplier']
+                : null;
+            $measurementUnit = is_array($firstItem) && is_string($firstItem['measurementUnit'] ?? null)
+                ? mb_strtolower((string) $firstItem['measurementUnit'])
+                : null;
             $firstSeller = is_array($firstItem['sellers'] ?? null) ? ($firstItem['sellers'][0] ?? null) : null;
             $offer = is_array($firstSeller['commertialOffer'] ?? null) ? ($firstSeller['commertialOffer'] ?? null) : null;
 
@@ -731,6 +737,23 @@ class PlazaVeaClient implements StoreClientInterface
             }
             if (is_array($offer) && $cardPrice === null) {
                 [$cardPrice, $cardLabel] = $this->extractCardPriceFromOffer($offer);
+            }
+
+            if ($cardPrice !== null
+                && $unitMultiplier !== null
+                && $unitMultiplier > 1
+                && in_array($measurementUnit, ['kg', 'l'], true)
+            ) {
+                $source = $priceWithoutDiscount ?? $price;
+                if ($source !== null) {
+                    $discount = $source - $cardPrice;
+                    if ($discount > 0) {
+                        $scaled = $source - ($discount / $unitMultiplier);
+                        if ($scaled > 0 && $scaled < $source) {
+                            $cardPrice = round($scaled, 2);
+                        }
+                    }
+                }
             }
 
             $url = null;
