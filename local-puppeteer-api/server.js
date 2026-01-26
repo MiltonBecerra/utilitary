@@ -33,18 +33,51 @@ app.post('/scrape/ripley', authMiddleware, async (req, res) => {
         const page = await browser.newPage();
         await page.goto(url, { waitUntil: 'networkidle2' });
         
-        // Esperar y extraer resultados
-        await page.waitForSelector('.product-item', { timeout: 10000 });
+        // Esperar y extraer productos - adaptado para páginas de producto de Ripley
+        let products = [];
         
-        const products = await page.evaluate(() => {
-            const items = document.querySelectorAll('.product-item');
-            return Array.from(items).map(item => ({
-                name: item.querySelector('.product-name')?.textContent?.trim(),
-                price: item.querySelector('.product-price')?.textContent?.trim(),
-                image: item.querySelector('img')?.src,
-                link: item.querySelector('a')?.href
-            }));
-        });
+        try {
+            // Intentar esperar a productos específicos de Ripley
+            await page.waitForSelector('.product-page', '.product-internet-price', '[data-testid="product-price"]', { timeout: 5000 });
+            
+            products = await page.evaluate(() => {
+                // Para páginas de producto individual
+                const title = document.querySelector('h1')?.textContent?.trim() || 'Producto Ripley';
+                const price = document.querySelector('.product-internet-price .product-price, .product-price__current, [data-testid="product-price"]')?.textContent?.trim();
+                const image = document.querySelector('meta[property="og:image"]')?.content || document.querySelector('img[itemprop="image"]')?.src;
+                
+                return [{
+                    name: title,
+                    price: price,
+                    image: image,
+                    link: url
+                }];
+            });
+        } catch (e) {
+            // Fallback para cualquier página - extraer información básica del producto
+            products = await page.evaluate(() => {
+                const title = document.querySelector('h1')?.textContent?.trim() || document.title;
+                const priceElement = document.querySelector('[data-testid="product-price"], .product-price, .price, meta[property="product:price:amount"]');
+                let price = null;
+                
+                if (priceElement) {
+                    if (priceElement.tagName === 'META') {
+                        price = priceElement.content;
+                    } else {
+                        price = priceElement.textContent?.trim();
+                    }
+                }
+                
+                const image = document.querySelector('meta[property="og:image"]')?.content || document.querySelector('img')?.src;
+                
+                return [{
+                    name: title,
+                    price: price,
+                    image: image,
+                    link: window.location.href
+                }];
+            });
+        }
         
         res.json({ success: true, data: products });
         

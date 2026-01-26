@@ -1600,8 +1600,17 @@ document.addEventListener('DOMContentLoaded', function () {
                       'X-CSRF-TOKEN': token || '',
                   },
               });
-              if (!res.ok) throw new Error('No se pudo eliminar la alerta.');
+if (!res.ok) throw new Error('No se pudo eliminar la alerta.');
               removeAlertFromDom(alertId, form);
+              
+              // Actualizar contador de alertas en el header
+              const alertCounter = document.querySelector('.fx-stat-value');
+              if (alertCounter && alertCounter.textContent.includes('alertas')) {
+                  const currentCount = parseInt(alertCounter.textContent) || 0;
+                  const newCount = Math.max(0, currentCount - 1);
+                  alertCounter.textContent = newCount + ' alertas';
+              }
+              
               showAlertFeedback('Alerta eliminada exitosamente!', 'success');
           } catch (error) {
               console.error('Error eliminando alerta', error);

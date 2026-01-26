@@ -29,7 +29,7 @@
                                 </div>
                             @endif
                             <div class="flex-grow-1">
-                                <h4 class="mb-1">{{ $offerAlert->title ?? 'Sin título' }}</h4>
+                                <h4 class="mb-1">{!! $offerAlert->title ?? 'Sin título' !!}</h4>
                                 <div class="text-muted text-uppercase mb-2">{{ str_replace('_', ' ', $offerAlert->store ?? 'desconocido') }}</div>
                                 <a href="{{ $offerAlert->url }}" target="_blank" rel="noopener" class="btn btn-sm btn-outline-primary">
                                     <i class="fas fa-external-link-alt mr-1"></i> Ver producto
@@ -53,12 +53,31 @@
                             <div class="col-md-4">
                                 <div class="small text-muted">Precio actual</div>
                                 @php
-                                    $displayPrice = $offerAlert->price_type === 'cmr' ? $offerAlert->cmr_price : $offerAlert->public_price;
-                                    if ($displayPrice === null) {
+                                    // Lógica mejorada para mostrar precio disponible según lo que tenga el producto
+                                    if ($offerAlert->price_type === 'cmr') {
+                                        $displayPrice = $offerAlert->cmr_price;
+                                        $priceTypeLabel = 'CMR';
+                                        
+                                        // Si no hay precio CMR, mostrar automáticamente el precio público
+                                        if ($displayPrice === null && $offerAlert->public_price !== null) {
+                                            $displayPrice = $offerAlert->public_price;
+                                            $priceTypeLabel = 'Público (CMR no disponible)';
+                                        }
+                                    } else {
+                                        $displayPrice = $offerAlert->public_price;
+                                        $priceTypeLabel = 'Público';
+                                    }
+                                    
+                                    // Fallback final
+                                    if ($displayPrice === null && $offerAlert->current_price !== null) {
                                         $displayPrice = $offerAlert->current_price;
+                                        $priceTypeLabel = 'Precio actual';
                                     }
                                 @endphp
                                 <div class="h5 mb-0">S/ {{ number_format($displayPrice, 2) }}</div>
+                                @if(isset($priceTypeLabel))
+                                    <small class="text-muted">{{ $priceTypeLabel }}</small>
+                                @endif
                             </div>
                             <div class="col-md-4">
                                 <div class="small text-muted">Precio objetivo</div>

@@ -50,15 +50,15 @@ class CheckOfferAlerts extends Command
                 $effectivePriceType = $alert->price_type;
                 $selected = $effectivePriceType === 'cmr' ? $cmrPrice : $publicPrice;
 
-                // Si el precio no público no existe, usar el precio público (fallback global).
-                if ($effectivePriceType === 'cmr' && $selected === null && $publicPrice !== null) {
-                    Log::info('offer_alert_price_type_fallback_to_public', [
+                // Si el usuario quiere precio de tarjeta pero no hay disponible, desactivar la alerta
+                if ($effectivePriceType === 'cmr' && ($selected === null || $selected === false)) {
+                    Log::info('offer_alert_deactivated_no_card_price', [
                         'offer_alert_id' => $alert->id,
                         'store' => $store,
                         'url' => $alert->url,
                     ]);
-                    $selected = $publicPrice;
-                    $effectivePriceType = 'public';
+                    $alert->update(['status' => 'inactive']);
+                    continue;
                 }
 
                 if ($selected === null) {
@@ -68,8 +68,18 @@ class CheckOfferAlerts extends Command
 
                 $selected = (float) $selected;
 
+                // Si anteriormente no tenía precio de tarjeta (-1), y ahora sí tiene, resetear el flag
+                $resetNotificationFlag = false;
+                if ($alert->last_notified_price == -1 && $effectivePriceType === 'cmr') {
+                    $resetNotificationFlag = true;
+                    Log::info('card_price_available_again', [
+                        'offer_alert_id' => $alert->id,
+                        'store' => $store,
+                    ]);
+                }
+
                 $alert->update([
-                    'title' => $product['title'] ?? $alert->title,
+                    'title' => isset($product['title']) ? html_entity_decode($product['title'], ENT_QUOTES | ENT_HTML5, 'UTF-8') : $alert->title,
                     'store' => $store,
                     'image_url' => $product['image_url'] ?? $alert->image_url,
                     'current_price' => $selected,

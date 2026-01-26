@@ -253,10 +253,43 @@ class OfferPriceScraperService
 
     private function normalizeRipleyUrl(string $url): ?string
     {
-        $lower = strtolower($url);
-        if (str_contains($lower, 'simple.ripley.com.pe')) {
-            return str_ireplace('simple.ripley.com.pe', 'www.ripley.com.pe', $url);
+        if (empty($url)) {
+            return null;
         }
+
+        $parsed = parse_url($url);
+        if (!$parsed || !isset($parsed['host'])) {
+            return null;
+        }
+
+        $host = strtolower($parsed['host']);
+        
+        // Normalizar diferentes subdominios de Ripley a www.ripley.com.pe
+        if (str_contains($host, 'ripley.com.pe')) {
+            // Remover subdominio simple, m, etc.
+            if ($host === 'simple.ripley.com.pe' || $host === 'm.ripley.com.pe') {
+                $normalizedHost = 'www.ripley.com.pe';
+            } elseif ($host === 'www.ripley.com.pe') {
+                $normalizedHost = $host;
+            } else {
+                // Para otros subdominios, usar www
+                $normalizedHost = 'www.ripley.com.pe';
+            }
+            
+            // Reconstruir URL con host normalizado
+            $normalizedUrl = $url;
+            $normalizedUrl = str_replace($parsed['host'], $normalizedHost, $normalizedUrl);
+            
+            \Log::info('ripley_url_normalized', [
+                'original' => $url,
+                'normalized' => $normalizedUrl,
+                'original_host' => $parsed['host'],
+                'normalized_host' => $normalizedHost
+            ]);
+            
+            return $normalizedUrl;
+        }
+        
         return $url;
     }
 
@@ -466,26 +499,168 @@ class OfferPriceScraperService
     private function scrapeRipley(Crawler $crawler, string $url): array
     {
         $data = $this->parseJsonLd($crawler);
-        $prices = $this->gatherPrices($crawler, [
+        
+        // Selectores mejorados para precio público (precio Internet) - 18 selectores
+        $publicPriceSelectors = [
+            // Selectores específicos de Ripley
+            '.product-internet-price-not-best .product-price',
+            '.catalog-prices__offer-price',
+            '.product-price__current',
+            '.price__main',
             '.product-price__final-price',
             '.product-prices__price',
+            // Data attributes y test IDs
+            '[data-testid="product-price"]',
+            '[data-test-id="product-price"]',
+            '[data-test-id="internet-price"]',
+            // Meta tags
             '[itemprop="price"]',
             'meta[property="product:price:amount"]',
+            'meta[name="twitter:data1"]',
+            // Selectores alternativos
+            '.price-current',
+            '.sale-price',
+            '.internet-price',
+            '.product-internet-price',
+            '.best-price',
+            '.current-price',
+        ];
+        
+        // Selectores mejorados para precio de tarjeta Ripley - 17 selectores
+        $cardPriceSelectors = [
+            // Selectores específicos de Ripley
+            '.product-ripley-price .product-price',
+            '.catalog-prices__card-price',
+            '.product-price__card',
+            '.price-card',
+            '.tarjeta-ripley-price',
+            '.product-price__card-price',
+            '.product-prices__card-price',
+            // Data attributes y test IDs
+            '[data-testid="card-price"]',
+            '[data-test-id="card-price"]',
+            '[data-test-id="ripley-card-price"]',
+            '[data-test-id="tarjeta-ripley"]',
+            // Selectores alternativos
+            '.ripley-card-price',
+            '.tarjeta-precio',
+            '.tc-ripley-price',
+            '.ripley-tarjeta-price',
+            '.card-price-ripley',
+        ];
+        
+        // Selectores para precio anterior/tachado
+        $listPriceSelectors = [
+            '.catalog-prices__list-price',
+            '.product-price__original',
+            '.price__original',
+            '.product-price__before',
+            '.product-prices__list-price',
+            '.price-before',
+            '.price-old',
+            '.regular-price',
+        ];
+
+        $publicPrices = $this->gatherPrices($crawler, $publicPriceSelectors);
+        $cardPrices = $this->gatherPrices($crawler, $cardPriceSelectors);
+        $listPrices = $this->gatherPrices($crawler, $listPriceSelectors);
+        
+        // Logging para debugging
+        \Log::info('ripley_scraping_debug', [
+            'url' => $url,
+            'public_prices_found' => count($publicPrices),
+            'card_prices_found' => count($cardPrices),
+            'public_prices' => $publicPrices,
+            'card_prices' => $cardPrices,
         ]);
 
-        if (isset($data['offers']['price'])) {
-            $prices[] = $this->toNumber($data['offers']['price']);
+        // Extraer precios desde JSON-LD
+        // Priorizar sale_price (precio internet) sobre price (precio normal)
+        if (isset($data['offers']['sale_price'])) {
+            $publicPrices[] = $this->toNumber($data['offers']['sale_price']);
+        } else if (isset($data['offers']['price'])) {
+            $publicPrices[] = $this->toNumber($data['offers']['price']);
+        }
+        
+        // Buscar precios en múltiples ofertas del JSON-LD
+        if (isset($data['offers']) && is_array($data['offers'])) {
+            foreach ($data['offers'] as $offer) {
+                if (isset($offer['price'])) {
+                    $publicPrices[] = $this->toNumber($offer['price']);
+                }
+                if (isset($offer['priceSpecification']) && is_array($offer['priceSpecification'])) {
+                    foreach ($offer['priceSpecification'] as $spec) {
+                        if (isset($spec['price'])) {
+                            if (isset($spec['name']) && (stripos($spec['name'], 'tarjeta') !== false || stripos($spec['name'], 'ripley') !== false)) {
+                                $cardPrices[] = $this->toNumber($spec['price']);
+                            } else {
+                                $publicPrices[] = $this->toNumber($spec['price']);
+                            }
+                        }
+                    }
+                }
+            }
         }
 
-        $preferred = $this->firstNonNull([
+        // Determinar el mejor precio público (excluyendo precios de tarjeta)
+        $publicCandidates = $publicPrices;
+        if (!empty($cardPrices)) {
+            $publicCandidates = array_values(array_filter($publicPrices, function ($price) use ($cardPrices) {
+                foreach ($cardPrices as $card) {
+                    if ($card !== null && $price !== null && abs($price - $card) < 0.01) {
+                        return false;
+                    }
+                }
+                return true;
+            }));
+        }
+
+        $publicPreferred = $this->firstNonNull([
             $this->toNumber($data['offers']['price'] ?? null),
-            $prices[0] ?? null,
+            $this->bestPrice($publicCandidates),
+            $this->bestPrice($publicPrices),
         ]);
+        
+        // Validar que realmente existan precios de tarjeta válidos con método mejorado
+        $hasValidCardPrice = $this->validateRipleyCardPriceImproved($crawler, $cardPrices);
+        
+        $cardPreferred = null;
+        if ($hasValidCardPrice) {
+            $cardPreferred = $this->firstNonNull([
+                $this->bestPrice($cardPrices),
+            ]);
+        }
+
+        // Guardar precios para referencia
+        if ($publicPreferred !== null) {
+            $this->htmlPricePublic = $publicPreferred;
+        }
+        // Para Ripley: si no hay precio tarjeta válido, dejamos null y buildPayload() se encargará de replicar el precio público
+        if ($cardPreferred !== null && $hasValidCardPrice) {
+            $this->htmlPriceCmr = $cardPreferred;
+        } else {
+            $this->htmlPriceCmr = null; // Explícitamente null si no hay precio válido, buildPayload() replicará
+        }
 
         $title = $data['name'] ?? $this->textFirst($crawler, 'h1', 'Producto Ripley');
         $image = $data['image'] ?? $this->imageFirst($crawler, 'meta[property="og:image"]', 'content');
+        if (is_array($image)) {
+            $image = $image[0] ?? null;
+        }
+        if (!$image) {
+            $image = $this->imageFirst($crawler, 'meta[property="og:image:secure_url"]', 'content');
+        }
 
-        return $this->buildPayload($title, $prices, $image, 'ripley', $url, $preferred, $prices);
+        return $this->buildPayload(
+            $title, 
+            array_merge($publicPrices, $cardPrices), 
+            $image, 
+            'ripley', 
+            $url, 
+            $publicPreferred, 
+            $publicPrices, 
+            $cardPrices
+        );
     }
 
     private function scrapeOechsle(Crawler $crawler, string $url): array
@@ -619,7 +794,36 @@ class OfferPriceScraperService
             $image = $this->imageFirst($crawler, 'img.product-image', 'src');
         }
 
-        return $this->buildPayload($title, $publicPrices, $image, 'sodimac', $url, $preferred, $publicPrices, $cardPrices);
+return $this->buildPayload($title, $publicPrices, $image, 'sodimac', $url, $preferred, $publicPrices, $cardPrices);
+    }
+
+    /**
+     * Extrae el productId de una URL de Promart
+     * Maneja tanto SKUs largos (1001477250) como cortos (150284)
+     */
+    private function extractPromartProductIdFromUrl(string $url): ?string
+    {
+        // 1. Patrón principal: número con guion antes del /p (SKUs largos)
+        if (preg_match('/-(\d+)\/p\/?$/', $url, $matches)) {
+            return $matches[1];
+        }
+        
+        // 2. Patrón mejorado: número antes del /p sin importar guion (SKUs cortos)
+        if (preg_match('/(\d+)\/p\/?$/', $url, $matches)) {
+            return $matches[1];
+        }
+        
+        // 3. Fallback: buscar cualquier número en URLs que terminan en /p
+        if (preg_match('/\/p$/', $url) && preg_match_all('/(\d+)/', $url, $matches)) {
+            return end($matches[1]);
+        }
+        
+        // 4. URLs con .html al final
+        if (preg_match('/(\d+)(?:\/?\.html)?$/', $url, $matches)) {
+            return $matches[1];
+        }
+        
+        return null;
     }
 
     private function scrapePromart(Crawler $crawler, string $url): array
@@ -645,30 +849,75 @@ class OfferPriceScraperService
             ]);
         }
 
-        // Intentar obtener precio Tarjeta Oh vía API
+// Intentar obtener precio Tarjeta Oh vía API
         $cardApiPrice = null;
         try {
-            // Extraer SKU del HTML
-            $html = $crawler->html();
-            $skuId = null;
-            // Buscar en inputs ocultos o llamadas JS
-            if (preg_match('/id="___rc-p-sku-ids"\s+value="(\d+)"/', $html, $matches)) {
-                $skuId = $matches[1];
-            } elseif (preg_match('/buyButton\((\d+),/', $html, $matches)) {
-                $skuId = $matches[1];
-            } elseif (preg_match('/skuId["\']?:["\']?(\d+)["\']?/', $html, $matches)) {
-                $skuId = $matches[1];
+            // PRIMERO: Intentar extraer productId desde la URL (más confiable)
+            $productId = $this->extractPromartProductIdFromUrl($url);
+            $skuId = null; // Este será el itemId extraído de la API
+            
+            // Validar que el productId extraído de la URL sea válido
+            // SKUs válidos de Promart suelen tener al menos 5-6 dígitos
+            if ($productId && strlen($productId) < 5) {
+                \Log::info('promart_invalid_url_product_id', [
+                    'url' => $url,
+                    'extracted_id' => $productId,
+                    'reason' => 'Too short, will search in HTML'
+                ]);
+                $productId = null; // Forzar búsqueda en HTML
             }
-            if ($skuId) {
-                // Llamar a la API de VTEX
-                // sc=2 es canal de ventas online usual
-                $apiUrl = "https://www.promart.pe/api/catalog_system/pub/products/search/?fq=skuId:{$skuId}&sc=2";
+            
+            // SEGUNDO: Si no se encontró en URL, buscar en HTML con múltiples patrones
+            if (!$productId) {
+                $html = $crawler->html();
+                
+                // Prioridad 1: Input hidden de VTEX (más confiable)
+                if (preg_match('/id="___rc-p-sku-ids"\s+value="(\d+)"/', $html, $matches)) {
+                    $productId = $matches[1];
+                }
+                // Prioridad 2: Meta tag de schema.org productID
+                elseif (preg_match('/itemprop=["\']productID["\']\s+content=["\'](\d+)["\']/', $html, $matches)) {
+                    $productId = $matches[1];
+                }
+                // Prioridad 3: Meta tag de SKU
+                elseif (preg_match('/itemprop=["\']sku["\']\s+content=["\'](\d+)["\']/', $html, $matches)) {
+                    $productId = $matches[1];
+                }
+                // Prioridad 4: Función buyButton de JavaScript
+                elseif (preg_match('/buyButton\((\d+),/', $html, $matches)) {
+                    $productId = $matches[1];
+                }
+                // Prioridad 5: JSON-LD structured data
+                elseif (preg_match('/"productId":\s*(\d+)/', $html, $matches)) {
+                    $productId = $matches[1];
+                }
+                // Prioridad 6: Cualquier referencia a skuId
+                elseif (preg_match('/skuId["\']?:["\']?(\d+)["\']?/', $html, $matches)) {
+                    $productId = $matches[1];
+                }
+                
+                \Log::info('promart_html_extraction', [
+                    'url' => $url,
+                    'product_id_found' => $productId ? true : false,
+                    'patterns_attempted' => 6
+                ]);
+            }
+            
+// Logging para debuggear qué productId se está usando
+            \Log::info('promart_product_extraction', [
+                'url' => $url,
+                'product_id_from_url' => $productId,
+            ]);
+
+            if ($productId) {
+// Llamar a la API de VTEX con productId
+                $apiUrl = "https://www.promart.pe/api/catalog_system/pub/products/search/?fq=productId:{$productId}&sc=2";
                 \Log::info('promart_api_request', [
                     'product_url' => $url,
-                    'sku_id' => $skuId,
+                    'product_id' => $productId,
                     'api_url' => $apiUrl,
                 ]);
-                
+                 
                 $response = $this->client->get($apiUrl, [
                     'headers' => [
                         'User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -681,9 +930,19 @@ class OfferPriceScraperService
                 $apiData = json_decode((string) $response->getBody(), true);
                 
                 if (!empty($apiData[0]['items'][0]['sellers'][0]['commertialOffer'])) {
+                    // Extraer el itemId real (SKU) desde la respuesta de la API
+                    $itemId = $apiData[0]['items'][0]['itemId'] ?? null;
+                    
                     $offer = $apiData[0]['items'][0]['sellers'][0]['commertialOffer'];
                     $basePrice = (float) ($offer['PriceWithoutDiscount'] ?? $offer['Price'] ?? 0);
                     $teasers = $offer['PromotionTeasers'] ?? [];
+                    
+                    \Log::info('promart_item_details', [
+                        'product_id' => $productId,
+                        'item_id' => $itemId,
+                        'base_price' => $basePrice,
+                        'promotions_count' => count($teasers)
+                    ]);
                     
                     foreach ($teasers as $teaser) {
                         // Buscar ID de medio de pago 203 (Tarjeta Oh)
@@ -703,12 +962,20 @@ class OfferPriceScraperService
                                     $discount = (float) ($effect['Value'] ?? 0);
                                     if ($discount > 0 && $basePrice > 0) {
                                         $cardApiPrice = $basePrice - $discount;
+                                        
+                                        \Log::info('promart_card_price_calculated', [
+                                            'product_id' => $productId,
+                                            'item_id' => $itemId,
+                                            'base_price' => $basePrice,
+                                            'discount' => $discount,
+                                            'card_price' => $cardApiPrice
+                                        ]);
                                     }
                                     break 2;
                                 }
                             }
                         }
-                    }
+}
                 }
             }
         } catch (\Throwable $e) {
@@ -780,6 +1047,15 @@ class OfferPriceScraperService
             if (!is_array($decoded)) {
                 return;
             }
+            
+            // Decodificar entidades HTML en todos los strings del array
+            array_walk_recursive($decoded, function(&$value) {
+                if (is_string($value)) {
+                    $value = html_entity_decode($value, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+                    $value = stripslashes($value);
+                }
+            });
+            
             if (isset($decoded['@type']) && Str::contains(strtolower($decoded['@type']), 'product')) {
                 $data = $decoded;
             }
@@ -838,7 +1114,7 @@ class OfferPriceScraperService
         return array_filter($prices, fn ($p) => $p !== null && $p > 0);
     }
 
-    private function toNumber(?string $raw): ?float
+private function toNumber(?string $raw): ?float
     {
         if ($raw === null) {
             return null;
@@ -849,12 +1125,32 @@ class OfferPriceScraperService
             return null;
         }
 
-        // Si trae ambos separadores, asumimos coma como decimal.
+        // Si hay ambos separadores, asumir formato peruano: 1,399 = 1399
         if (strpos($clean, '.') !== false && strpos($clean, ',') !== false) {
-            $clean = str_replace('.', '', $clean);
-            $clean = str_replace(',', '.', $clean);
+            $dots = substr_count($clean, '.');
+            $commas = substr_count($clean, ',');
+            
+            if ($commas === 1 && $dots > 0) {
+                // Formato: 1.399,00 o similar - coma es decimal
+                $clean = str_replace('.', '', $clean);
+                $clean = str_replace(',', '.', $clean);
+            } elseif ($dots === 1 && $commas > 1) {
+                // Formato: 1,399.00 - punto es decimal
+                $clean = str_replace(',', '', $clean);
+            } else {
+                // Asumir formato peruano: 1,399 = 1399 (coma es miles)
+                $clean = str_replace(',', '', $clean);
+            }
         } elseif (strpos($clean, ',') !== false && strpos($clean, '.') === false) {
-            $clean = str_replace(',', '.', $clean);
+            // Solo coma - verificar si es decimal o miles
+            $parts = explode(',', $clean);
+            if (count($parts) === 2 && strlen($parts[1]) === 2) {
+                // Probablemente es decimal (ej: 1499,90)
+                $clean = str_replace(',', '.', $clean);
+            } else {
+                // Probablemente es miles (ej: 1,399)
+                $clean = str_replace(',', '', $clean);
+            }
         }
 
         return is_numeric($clean) ? (float) $clean : null;
@@ -864,7 +1160,13 @@ class OfferPriceScraperService
     {
         try {
             $text = $crawler->filter($selector)->first()->text();
-            return trim($text) ?: $fallback;
+            $text = trim($text);
+            
+            // Limpiar entidades HTML y stripslashes
+            $text = html_entity_decode($text, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+            $text = stripslashes($text);
+            
+            return $text ?: $fallback;
         } catch (\Throwable $e) {
             return $fallback;
         }
@@ -900,10 +1202,26 @@ class OfferPriceScraperService
             $this->htmlPriceCmr,
             $this->bestPrice($cmrPrices),
         ]);
-        if ($cmrBest === null) {
-            $cmrBest = $publicBest;
+        
+        // Lógica específica para Ripley: replicar precios cuando no hay precio de tarjeta
+        if ($store === 'ripley') {
+            if ($cmrBest === null && $publicBest !== null) {
+                // Si no hay precio tarjeta pero hay precio público, usar el precio público
+                $cmrBest = $publicBest;
+            }
+            // El price final debe ser el mejor precio entre los disponibles
+            $allPrices = array_filter([$publicBest, $cmrBest, $preferredPrice]);
+            $price = $this->bestPrice($allPrices) ?? $publicBest ?? $preferredPrice ?? 0;
+            
+            // Para Ripley, si no hay precio tarjeta válido, dejar cmrBest como null
+            // para que el frontend muestre correctamente "No disponible"
+            if ($cmrBest === null) {
+                $cmrBest = null;
+            }
+        } else {
+            // Lógica para otras tiendas
+            $price = $preferredPrice ?? $this->bestPrice($prices) ?? $publicBest ?? $cmrBest;
         }
-        $price = $preferredPrice ?? $this->bestPrice($prices) ?? $publicBest ?? $cmrBest;
 
         return [
             'title' => $title,
@@ -1299,6 +1617,85 @@ class OfferPriceScraperService
         } catch (\Throwable $e) {
             return null;
         }
+    }
+
+    /**
+     * Valida que realmente exista un precio de tarjeta Ripley válido
+     */
+    private function validateRipleyCardPrice(Crawler $crawler, array $cardPrices): bool
+    {
+        // Si no hay precios extraídos, no es válido
+        if (empty($cardPrices)) {
+            return false;
+        }
+
+        // Verificar que los elementos de precio de tarjeta realmente existan en la página
+        $cardPriceElements = $crawler->filter('.product-ripley-price, .catalog-prices__card-price, .product-price__card, .price-card, .tarjeta-ripley-price, .product-price__card-price, .product-prices__card-price, [data-testid="card-price"]');
+        
+        if ($cardPriceElements->count() === 0) {
+            return false;
+        }
+
+        // Verificar que el texto contenga un precio válido y no sea placeholder
+        foreach ($cardPriceElements as $element) {
+            $text = trim($element->textContent);
+            
+            // Buscar patrones de precios válidos (ej: S/ 4919, 4919.00, etc.)
+            if (preg_match('/^(S\/\s*)?\d{1,3}([.,]\d{3})*([.,]\d{2})?$/', $text)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Validación mejorada para precio de tarjeta Ripley con múltiples niveles de verificación
+     */
+    private function validateRipleyCardPriceImproved(Crawler $crawler, array $cardPrices): bool
+    {
+        // Si hay precios de tarjeta encontrados, verificar si son válidos
+        if (empty($cardPrices)) {
+            return false;
+        }
+
+        // Método mejorado: verificar si los precios son demasiado altos o inconsistentes
+        $hasValidPrice = false;
+        foreach ($cardPrices as $cardPrice) {
+            if ($cardPrice !== null && $cardPrice > 0 && $cardPrice < 50000) {
+                $hasValidPrice = true;
+                break;
+            }
+        }
+
+        // Verificación adicional: si no hay precio público válido pero sí precio tarjeta,
+        // probablemente es un error de detección
+        $publicPrices = $this->gatherPrices($crawler, [
+            '.product-internet-price .product-price',
+            '.catalog-prices__offer-price',
+            '.product-price__current',
+            '[data-testid="product-price"]',
+        ]);
+
+        if (empty($publicPrices) && $hasValidPrice) {
+            Log::warning('ripley_card_validation_suspicious', [
+                'card_prices' => $cardPrices,
+                'public_prices_count' => count($publicPrices)
+            ]);
+            return false;
+        }
+
+        // Verificar si la página está bloqueada (título específico de bloqueo)
+        $pageTitle = $crawler->filter('title')->first()->text();
+        if (stripos($pageTitle, 'Alto, no puedes acceder') !== false || 
+            stripos($pageTitle, 'Acceso denegado') !== false) {
+            Log::warning('ripley_access_blocked', [
+                'page_title' => $pageTitle
+            ]);
+            return false;
+        }
+
+        return $hasValidPrice;
     }
 }
 

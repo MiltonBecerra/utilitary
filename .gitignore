@@ -25,3 +25,30 @@ yarn-error.log
 *.ppk
 id_rsa
 id_ed25519
+
+# Archivos temporales y de backup
+*.backup
+*.bak
+*.tmp
+nul
+
+# Imágenes de prueba para scraping
+falabella-*.png
+oechsle-*.png
+sodimac-*.png
+offer-alerts-app.png
+
+# Scripts de validación y análisis
+*-validation.js
+youtube-performance-analysis.js
+
+# Configuración MCP
+mcp-config.json
+
+# Node modules locales
+local-puppeteer-api/node_modules/
+local-puppeteer-api/package-lock.json
+
+# Archivos de debug de scraping
+storage/app/scrape-*
+storage/logs/scrape-*.log

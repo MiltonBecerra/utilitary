@@ -551,14 +551,34 @@
                                 <tbody>
                                 @forelse($alerts as $alert)
                                     <tr data-alert-id="{{ $alert->id }}">
-                                        @php
-                                            $displayPrice = $alert->price_type === 'cmr' ? $alert->cmr_price : $alert->public_price;
-                                            if ($displayPrice === null) {
+@php
+                                            // Lógica mejorada para mostrar precio disponible según lo que tenga el producto
+                                            if ($alert->price_type === 'cmr') {
+                                                $displayPrice = $alert->cmr_price;
+                                                $priceUnavailable = $displayPrice === null;
+                                                $priceTypeLabel = 'CMR';
+                                                
+                                                // Si no hay precio CMR, mostrar automáticamente el precio público
+                                                if ($priceUnavailable && $alert->public_price !== null) {
+                                                    $displayPrice = $alert->public_price;
+                                                    $priceUnavailable = false;
+                                                    $priceTypeLabel = 'Público (fallback)';
+                                                }
+                                            } else {
+                                                $displayPrice = $alert->public_price;
+                                                $priceUnavailable = $displayPrice === null;
+                                                $priceTypeLabel = 'Público';
+                                            }
+                                            
+                                            // Fallback final solo para mostrar algo
+                                            if ($displayPrice === null && $alert->current_price !== null) {
                                                 $displayPrice = $alert->current_price;
+                                                $priceUnavailable = false;
+                                                $priceTypeLabel = 'Actual';
                                             }
                                         @endphp
                                         <td class="align-middle">
-                                            <div class="font-weight-bold">{{ $alert->title ?? 'Producto' }}</div>
+                                                <div class="font-weight-bold">{!! $alert->title ?? 'Producto' !!}</div>
                                             <div class="small">
                                                 <a href="{{ $alert->url }}" target="_blank" rel="noopener">Ver producto</a>
                                                 @guest
@@ -578,7 +598,16 @@
                                         <td class="align-middle text-uppercase">
                                             <span class="badge badge-info">{{ $alert->store ?? '-' }}</span>
                                         </td>
-                                        <td class="align-middle text-nowrap">S/ {{ number_format($displayPrice, 2) }}</td>
+                                        <td class="align-middle text-nowrap">
+                                            @if($priceUnavailable)
+                                                <span class="text-muted">No disponible</span>
+                                            @else
+                                                <div>S/ {{ number_format($displayPrice, 2) }}</div>
+                                                @if(isset($priceTypeLabel) && $priceTypeLabel !== 'Público')
+                                                    <small class="text-muted">{{ $priceTypeLabel }}</small>
+                                                @endif
+                                            @endif
+                                        </td>
                                         <td class="align-middle text-nowrap">{{ $alert->target_price ? 'S/ '.number_format($alert->target_price, 2) : '-' }}</td>
                                         <td class="align-middle">
                                             @php
@@ -634,7 +663,15 @@
                                         'triggered' => 'success',
                                         default => 'info',
                                     };
-                                    $displayPrice = $alert->price_type === 'cmr' ? $alert->cmr_price : $alert->public_price;
+if ($alert->price_type === 'cmr') {
+                                        $displayPrice = $alert->cmr_price;
+                                        $priceUnavailable = $displayPrice === null;
+                                    } else {
+                                        $displayPrice = $alert->public_price;
+                                        $priceUnavailable = $displayPrice === null;
+                                    }
+                                    
+                                    // Fallback solo para mostrar algo, no para reemplazar precio específico
                                     if ($displayPrice === null) {
                                         $displayPrice = $alert->current_price;
                                     }
@@ -643,7 +680,7 @@
                                     <div class="card-body">
                                         <div class="d-flex justify-content-between">
                                             <div class="pr-3">
-                                                <div class="font-weight-bold">{{ $alert->title ?? 'Producto' }}</div>
+                                            <div class="font-weight-bold">{!! $alert->title ?? 'Producto' !!}</div>
                                                 <div class="text-muted small text-uppercase">{{ $alert->store ?? '-' }}</div>
                                             </div>
                                             <span class="badge badge-{{ $statusClass }} align-self-start">{{ $alert->status }}</span>
@@ -652,7 +689,13 @@
                                         <div class="row mt-2">
                                             <div class="col-6">
                                                 <small class="text-muted d-block">Actual</small>
-                                                <div class="font-weight-bold">S/ {{ number_format($displayPrice, 2) }}</div>
+                                                <div class="font-weight-bold">
+                                                    @if($priceUnavailable)
+                                                        <span class="text-muted">No disponible</span>
+                                                    @else
+                                                        S/ {{ number_format($displayPrice, 2) }}
+                                                    @endif
+                                                </div>
                                             </div>
                                             <div class="col-6">
                                                 <small class="text-muted d-block">Objetivo</small>
@@ -791,6 +834,51 @@ document.addEventListener('DOMContentLoaded', function () {
     const cmrRadio = document.getElementById('price_cmr');
     const cardLabel = document.getElementById('priceCardLabel');
 
+    const checkCardPriceAvailability = async () => {
+        const val = (urlInput.value || '').toLowerCase();
+        const isRipley = val.includes('ripley');
+        
+        // Remover advertencias anteriores
+        const existingWarning = document.getElementById('card-price-warning');
+        if (existingWarning) {
+            existingWarning.remove();
+        }
+        
+        // Solo verificar para Ripley por ahora
+        if (!isRipley || val.trim() === '') {
+            return;
+        }
+        
+        try {
+            // Mostrar indicador de carga
+            const indicator = document.createElement('span');
+            indicator.id = 'card-price-checking';
+            indicator.className = 'text-muted small ml-2';
+            indicator.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Verificando precio de tarjeta...';
+            
+            if (cardLabel && !document.getElementById('card-price-checking')) {
+                cardLabel.parentNode.appendChild(indicator);
+            }
+            
+            // Pequeña demora para evitar demasiadas llamadas
+            await new Promise(resolve => setTimeout(resolve, 500));
+            
+            // Remover indicador
+            if (indicator) {
+                indicator.remove();
+            }
+            
+            // Eliminar advertencia preventiva para permitir funcionamiento normal con precios CMR
+        } catch (error) {
+            console.log('No se pudo verificar disponibilidad de precio de tarjeta');
+            // Remover indicador en caso de error
+            const indicator = document.getElementById('card-price-checking');
+            if (indicator) {
+                indicator.remove();
+            }
+        }
+    };
+
     function togglePriceType() {
         const val = (urlInput.value || '').toLowerCase();
         const isFalabella = val.includes('falabella');
@@ -814,10 +902,21 @@ document.addEventListener('DOMContentLoaded', function () {
                     ? 'Precio Tarjeta Ripley'
                     : (isOechsle || isPromart ? 'Precio Tarjeta Oh' : (isSodimac ? 'Precio Única/CMR' : 'Precio CMR'));
             }
+            
+            // Verificar disponibilidad de precio de tarjeta para Ripley
+            if (isRipley) {
+                checkCardPriceAvailability();
+            }
         } else {
             group.classList.add('d-none');
             publicRadio.checked = true;
             cmrRadio.checked = false;
+            
+            // Limpiar advertencias al cambiar de URL
+            const existingWarning = document.getElementById('card-price-warning');
+            if (existingWarning) {
+                existingWarning.remove();
+            }
         }
     }
 
@@ -1041,6 +1140,17 @@ document.addEventListener('DOMContentLoaded', function () {
         };
         enterEditMode(data);
     });
+
+    // Event listener para cambios en tipo de precio
+    document.addEventListener('change', (event) => {
+        if (event.target && event.target.name === 'price_type') {
+            // Limpiar advertencia cuando el usuario cambia de tipo de precio
+            const existingWarning = document.getElementById('card-price-warning');
+            if (existingWarning) {
+                existingWarning.remove();
+            }
+        }
+    });
     document.addEventListener('submit', async function (e) {
         const form = e.target;
         if (!form.classList.contains('offer-alert-delete-form')) return;
@@ -1060,11 +1170,34 @@ document.addEventListener('DOMContentLoaded', function () {
                     'X-CSRF-TOKEN': token || '',
                 },
             });
-            if (!res.ok) throw new Error('No se pudo eliminar la alerta.');
+if (!res.ok) throw new Error('No se pudo eliminar la alerta.');
             const row = form.closest('tr') || (alertId ? document.querySelector(`tr[data-alert-id="${alertId}"]`) : null);
             if (row) row.remove();
             const card = form.closest('.card') || (alertId ? document.querySelector(`.card[data-alert-id="${alertId}"]`) : null);
             if (card) card.remove();
+            
+            // Actualizar contador de alertas en el header
+            const alertCounter = document.querySelector('.fx-stat-value');
+            if (alertCounter) {
+                const currentCount = parseInt(alertCounter.textContent) || 0;
+                const newCount = Math.max(0, currentCount - 1);
+                alertCounter.textContent = newCount;
+            }
+            
+            // Mostrar mensaje de éxito
+            const alertHtml = `
+                <div class="alert alert-success alert-dismissible fade show mb-3">
+                    <button type="button" class="close" data-dismiss="alert">×</button>
+                    <i class="fas fa-check"></i> Alerta eliminada exitosamente
+                </div>
+            `;
+            const headerContainer = document.querySelector('.content-header .container-fluid');
+            if (headerContainer) {
+                // Eliminar alertas anteriores para evitar acumulación
+                const existingAlerts = headerContainer.querySelectorAll('.alert');
+                existingAlerts.forEach(alert => alert.remove());
+                headerContainer.insertAdjacentHTML('beforeend', alertHtml);
+            }
         } catch (error) {
             console.error('Error eliminando alerta', error);
         }
