@@ -24,7 +24,13 @@ class OfferAlertTriggered extends Notification
 
     public function toMail($notifiable): MailMessage
     {
+        // Limpiar título de entidades HTML
         $title = $this->alert->title ?: 'Producto';
+        if ($title) {
+            $title = html_entity_decode($title, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+            $title = stripslashes($title);
+        }
+        
         $store = $this->alert->store ?: 'tienda';
         $targetText = $this->alert->target_price ? ('S/ ' . number_format((float) $this->alert->target_price, 2)) : 'cualquier baja';
 

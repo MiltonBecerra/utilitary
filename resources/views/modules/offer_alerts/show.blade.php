@@ -29,7 +29,7 @@
                                 </div>
                             @endif
                             <div class="flex-grow-1">
-                                <h4 class="mb-1">{{ $offerAlert->title ?? 'Sin título' }}</h4>
+                                <h4 class="mb-1">{!! $offerAlert->title ?? 'Sin título' !!}</h4>
                                 <div class="text-muted text-uppercase mb-2">{{ str_replace('_', ' ', $offerAlert->store ?? 'desconocido') }}</div>
                                 <a href="{{ $offerAlert->url }}" target="_blank" rel="noopener" class="btn btn-sm btn-outline-primary">
                                     <i class="fas fa-external-link-alt mr-1"></i> Ver producto

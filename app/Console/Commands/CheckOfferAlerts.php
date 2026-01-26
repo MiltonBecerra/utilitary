@@ -79,7 +79,7 @@ class CheckOfferAlerts extends Command
                 }
 
                 $alert->update([
-                    'title' => $product['title'] ?? $alert->title,
+                    'title' => isset($product['title']) ? html_entity_decode($product['title'], ENT_QUOTES | ENT_HTML5, 'UTF-8') : $alert->title,
                     'store' => $store,
                     'image_url' => $product['image_url'] ?? $alert->image_url,
                     'current_price' => $selected,

@@ -578,7 +578,7 @@
                                             }
                                         @endphp
                                         <td class="align-middle">
-                                            <div class="font-weight-bold">{{ $alert->title ?? 'Producto' }}</div>
+                                                <div class="font-weight-bold">{!! $alert->title ?? 'Producto' !!}</div>
                                             <div class="small">
                                                 <a href="{{ $alert->url }}" target="_blank" rel="noopener">Ver producto</a>
                                                 @guest
@@ -680,7 +680,7 @@ if ($alert->price_type === 'cmr') {
                                     <div class="card-body">
                                         <div class="d-flex justify-content-between">
                                             <div class="pr-3">
-                                                <div class="font-weight-bold">{{ $alert->title ?? 'Producto' }}</div>
+                                            <div class="font-weight-bold">{!! $alert->title ?? 'Producto' !!}</div>
                                                 <div class="text-muted small text-uppercase">{{ $alert->store ?? '-' }}</div>
                                             </div>
                                             <span class="badge badge-{{ $statusClass }} align-self-start">{{ $alert->status }}</span>

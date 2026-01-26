@@ -1047,6 +1047,15 @@ return $this->buildPayload($title, $publicPrices, $image, 'sodimac', $url, $pref
             if (!is_array($decoded)) {
                 return;
             }
+            
+            // Decodificar entidades HTML en todos los strings del array
+            array_walk_recursive($decoded, function(&$value) {
+                if (is_string($value)) {
+                    $value = html_entity_decode($value, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+                    $value = stripslashes($value);
+                }
+            });
+            
             if (isset($decoded['@type']) && Str::contains(strtolower($decoded['@type']), 'product')) {
                 $data = $decoded;
             }
@@ -1151,7 +1160,13 @@ private function toNumber(?string $raw): ?float
     {
         try {
             $text = $crawler->filter($selector)->first()->text();
-            return trim($text) ?: $fallback;
+            $text = trim($text);
+            
+            // Limpiar entidades HTML y stripslashes
+            $text = html_entity_decode($text, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+            $text = stripslashes($text);
+            
+            return $text ?: $fallback;
         } catch (\Throwable $e) {
             return $fallback;
         }
@@ -1639,178 +1654,48 @@ private function toNumber(?string $raw): ?float
      */
     private function validateRipleyCardPriceImproved(Crawler $crawler, array $cardPrices): bool
     {
-        // Nivel 1: Verificar que haya precios extraídos
+        // Si hay precios de tarjeta encontrados, verificar si son válidos
         if (empty($cardPrices)) {
-            \Log::info('ripley_card_validation_fail_no_prices');
             return false;
         }
 
-        // Nivel 2: Verificar que al menos un precio sea válido numéricamente
-        $validNumericPrices = array_filter($cardPrices, function($price) {
-            return $price !== null && $price > 0 && $price < 99999;
-        });
-
-        if (empty($validNumericPrices)) {
-            \Log::info('ripley_card_validation_fail_no_valid_prices', ['card_prices' => $cardPrices]);
-            return false;
-        }
-
-        // Nivel 3: Verificar existencia de elementos DOM específicos de tarjeta
-        $cardSelectors = [
-            '.product-ripley-price',
-            '.catalog-prices__card-price', 
-            '.product-price__card',
-            '.price-card',
-            '.tarjeta-ripley-price',
-            '.product-price__card-price',
-            '.product-prices__card-price',
-            '[data-testid="card-price"]',
-            '[data-test-id="card-price"]',
-            '[data-test-id="ripley-card-price"]',
-            '.ripley-card-price',
-            '.tarjeta-precio'
-        ];
-
-        $hasCardElements = false;
-        foreach ($cardSelectors as $selector) {
-            $elements = $crawler->filter($selector);
-            if ($elements->count() > 0) {
-                $hasCardElements = true;
+        // Método mejorado: verificar si los precios son demasiado altos o inconsistentes
+        $hasValidPrice = false;
+        foreach ($cardPrices as $cardPrice) {
+            if ($cardPrice !== null && $cardPrice > 0 && $cardPrice < 50000) {
+                $hasValidPrice = true;
                 break;
             }
         }
 
-        if (!$hasCardElements) {
-            \Log::info('ripley_card_validation_fail_no_elements');
-            return false;
-        }
+        // Verificación adicional: si no hay precio público válido pero sí precio tarjeta,
+        // probablemente es un error de detección
+        $publicPrices = $this->gatherPrices($crawler, [
+            '.product-internet-price .product-price',
+            '.catalog-prices__offer-price',
+            '.product-price__current',
+            '[data-testid="product-price"]',
+        ]);
 
-        // Nivel 4: Validación estricta para evitar falsos positivos (puntos, bonos, etc.)
-        $hasValidContent = false;
-        $invalidPatterns = [
-            '/^\s*$/',
-            '/\$0/',
-            '/S\/\s*0/',
-            '/\d+RipleyPuntos/i',  // Falso positivo: puntos no son precio
-            '/puntos\s*go/i',      // Falso positivo: puntos
-            '/acumulas\s*\d+/i',   // Falso positivo: acumulación de puntos
-            '/bono/i',             // Bonos no son precios
-            '/descuento\s*\d+%?/i', // Descuentos porcentuales no son precios
-            '/\d+\s*%/i',          // Cualquier porcentaje
-            '/cuot/i',             // Cuotas no son precios únicos
-            '/mens/i',             // Mensualidades no son precios
-        ];
-
-        $validPricePatterns = [
-            '/S\/\s*\d{1,5}([.,]\d{3})*([.,]\d{2})?$/i',  // S/ 99999 o S/ 99,999
-            '/^\d{1,5}([.,]\d{3})*([.,]\d{2})?\s*S\/?$/i',  // 99999 S/
-            '/\d{1,5}([.,]\d{3})*([.,]\d{2})?(?![^\d]*puntos)/i', // Números no seguidos de "puntos"
-            '/S\/?\s*\d{1,5}([.,]\d{2})?$/i',                // Simplificado: S/ 999.99 o 999.99 S/
-            '/\d{1,5}([.,]\d{2})?(?![^\d]*puntos)/i',         // Simplificado: números sin puntos
-        ];
-
-        foreach ($cardSelectors as $selector) {
-            $elements = $crawler->filter($selector);
-            foreach ($elements as $element) {
-                $text = trim($element->textContent);
-                
-                // Verificar que no contenga patrones inválidos
-                $hasInvalidPattern = false;
-                foreach ($invalidPatterns as $pattern) {
-                    if (preg_match($pattern, $text)) {
-                        \Log::info('ripley_card_validation_invalid_pattern', [
-                            'text' => $text,
-                            'pattern' => $pattern
-                        ]);
-                        $hasInvalidPattern = true;
-                        break;
-                    }
-                }
-
-                if ($hasInvalidPattern) {
-                    continue;
-                }
-
-                // Verificar que contenga un precio válido
-                $hasValidPrice = false;
-                foreach ($validPricePatterns as $pattern) {
-                    if (preg_match($pattern, $text)) {
-                        $hasValidPrice = true;
-                        break;
-                    }
-                }
-
-                if (!$hasValidPrice) {
-                    \Log::info('ripley_card_validation_no_valid_price_pattern', [
-                        'text' => $text
-                    ]);
-                    continue;
-                }
-
-                // Verificar que sea visible
-                $styleAttr = $element->getAttribute('style') ?? '';
-                $isVisible = stripos($styleAttr, 'display:none') === false;
-                if (!$isVisible) {
-                    continue;
-                }
-
-                // Validación final del precio
-                $cardPriceValue = $this->toNumber($text);
-                if (!$cardPriceValue || $cardPriceValue <= 0) {
-                    continue;
-                }
-
-                // Verificación contextual: el texto debe indicar claramente un precio de tarjeta
-                $contextText = strtolower($element->textContent);
-                $parentText = strtolower($element->parentNode->textContent ?? '');
-                $fullContext = $contextText . ' ' . $parentText;
-
-                // Debe contener palabras clave de precio de tarjeta
-                $hasCardContext = (
-                    stripos($fullContext, 'tarjeta') !== false ||
-                    stripos($fullContext, 'ripley') !== false ||
-                    stripos($fullContext, 'cmr') !== false ||
-                    stripos($fullContext, 'precio') !== false
-                );
-
-                // NO debe contener palabras clave que indiquen puntos o bonos
-                $hasPointsContext = (
-                    stripos($fullContext, 'puntos') !== false ||
-                    stripos($fullContext, 'go') !== false ||
-                    stripos($fullContext, 'acumula') !== false ||
-                    stripos($fullContext, 'bono') !== false
-                );
-
-                if (!$hasCardContext || $hasPointsContext) {
-                    \Log::info('ripley_card_validation_invalid_context', [
-                        'text' => $text,
-                        'context' => $fullContext,
-                        'has_card_context' => $hasCardContext,
-                        'has_points_context' => $hasPointsContext
-                    ]);
-                    continue;
-                }
-
-                // Si pasa todas las validaciones, es un precio de tarjeta válido
-                $hasValidContent = true;
-                \Log::info('ripley_card_validation_success', [
-                    'text' => $text,
-                    'selector' => $selector,
-                    'price' => $cardPriceValue,
-                    'context' => $fullContext
-                ]);
-                break 2;
-            }
-        }
-
-        if (!$hasValidContent) {
-            \Log::info('ripley_card_validation_fail_no_valid_content', [
-                'prices' => $validNumericPrices
+        if (empty($publicPrices) && $hasValidPrice) {
+            Log::warning('ripley_card_validation_suspicious', [
+                'card_prices' => $cardPrices,
+                'public_prices_count' => count($publicPrices)
             ]);
             return false;
         }
 
-        return true;
+        // Verificar si la página está bloqueada (título específico de bloqueo)
+        $pageTitle = $crawler->filter('title')->first()->text();
+        if (stripos($pageTitle, 'Alto, no puedes acceder') !== false || 
+            stripos($pageTitle, 'Acceso denegado') !== false) {
+            Log::warning('ripley_access_blocked', [
+                'page_title' => $pageTitle
+            ]);
+            return false;
+        }
+
+        return $hasValidPrice;
     }
 }
 

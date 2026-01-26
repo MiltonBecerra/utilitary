@@ -193,7 +193,7 @@ class OfferAlertController extends Controller
             'contact_phone' => $request->contact_phone,
             'channel' => $channel,
             'url' => $request->url,
-            'title' => $product['title'] ?? null,
+            'title' => isset($product['title']) ? html_entity_decode($product['title'], ENT_QUOTES | ENT_HTML5, 'UTF-8') : null,
             'store' => $product['store'] ?? $store,
             'image_url' => $product['image_url'] ?? null,
             'current_price' => $selectedPrice,

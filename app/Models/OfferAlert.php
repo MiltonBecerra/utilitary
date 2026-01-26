@@ -60,4 +60,29 @@ class OfferAlert extends Model
     {
         return $this->belongsTo(Utility::class);
     }
+
+    /**
+     * Limpiar entidades HTML y stripslashes al obtener el título
+     */
+    public function getTitleAttribute($value)
+    {
+        if ($value) {
+            // Primero decodificar entidades HTML, luego aplicar stripslashes
+            $cleaned = html_entity_decode($value, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+            return stripslashes($cleaned);
+        }
+        return $value;
+    }
+
+    /**
+     * Limpiar entidades HTML al guardar el título
+     */
+    public function setTitleAttribute($value)
+    {
+        if ($value) {
+            $this->attributes['title'] = html_entity_decode($value, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        } else {
+            $this->attributes['title'] = $value;
+        }
+    }
 }
