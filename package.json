@@ -21,7 +21,27 @@
     },
     "dependencies": {
         "puppeteer": "^24.35.0",
+        "puppeteer-core": "^24.36.0",
         "puppeteer-extra": "^3.3.6",
         "puppeteer-extra-plugin-stealth": "^2.11.2"
-    }
+    },
+    "name": "utilitary",
+    "version": "1.0.0",
+    "description": "<h1 align=\"center\"><img src=\"https://assets.infyom.com/open-source/infyom-logo.png\" alt=\"InfyOm\"></h1>",
+    "main": "debug_ripley_prices.js",
+    "directories": {
+        "test": "tests"
+    },
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/MiltonBecerra/utilitary.git"
+    },
+    "keywords": [],
+    "author": "",
+    "license": "ISC",
+    "type": "commonjs",
+    "bugs": {
+        "url": "https://github.com/MiltonBecerra/utilitary/issues"
+    },
+    "homepage": "https://github.com/MiltonBecerra/utilitary#readme"
 }
