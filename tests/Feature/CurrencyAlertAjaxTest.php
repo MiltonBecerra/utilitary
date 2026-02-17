@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\Alert;
+use App\Models\ExchangeRate;
 use App\Models\ExchangeSource;
 use App\Models\User;
 use App\Modules\Core\Services\GuestService;
@@ -29,6 +30,7 @@ class CurrencyAlertAjaxTest extends TestCase
         $fake = new class($guestId, $plan) extends GuestService {
             public function __construct(private string $fakeGuestId, private string $fakePlan) {}
             public function getGuestId() { return $this->fakeGuestId; }
+            public function hasAcceptedTerms(): bool { return true; }
             public function getGuestPlan($utilityId = null) { return $this->fakePlan; }
             public function canGuestCreateAlert($utilityId = null) { return true; }
             public function canGuestUseWhatsApp($utilityId = null) { return $this->fakePlan === 'pro'; }
@@ -64,7 +66,7 @@ class CurrencyAlertAjaxTest extends TestCase
                 'message' => 'Alerta creada exitosamente!',
                 'alert' => [
                     'exchange_source_id' => $source->id,
-                    'target_price' => '3.76',
+                    'target_price' => '3.755',
                     'condition' => 'above',
                     'channel' => 'email',
                     'frequency' => 'once',
@@ -113,7 +115,7 @@ class CurrencyAlertAjaxTest extends TestCase
                 'message' => 'Alerta actualizada exitosamente!',
                 'alert' => [
                     'id' => $alert->id,
-                    'target_price' => '3.90',
+                    'target_price' => '3.900',
                     'condition' => 'above',
                     'channel' => 'email',
                     'contact_detail' => 'new@example.com',
@@ -243,7 +245,7 @@ class CurrencyAlertAjaxTest extends TestCase
         $response->assertOk()
             ->assertJsonFragment([
                 'message' => 'Alerta actualizada exitosamente!',
-                'target_price' => '3.95',
+                'target_price' => '3.950',
             ])
             ->assertHeaderMissing('Location');
 
@@ -302,5 +304,113 @@ class CurrencyAlertAjaxTest extends TestCase
 
         $response->assertRedirect('/currency-alert');
         $this->assertSoftDeleted('alerts', ['id' => $alert->id]);
+    }
+
+    public function test_create_alert_with_notify_on_change_sets_baseline_price_from_condition()
+    {
+        $user = User::factory()->create();
+        $source = $this->createSource();
+
+        ExchangeRate::create([
+            'exchange_source_id' => $source->id,
+            'buy_price' => 3.951,
+            'sell_price' => 3.977,
+            'currency_from' => 'PEN',
+            'currency_to' => 'USD',
+        ]);
+
+        $payload = [
+            'exchange_source_id' => $source->id,
+            'target_price' => 3.900,
+            'condition' => 'below',
+            'notify_on_change' => true,
+            'channel' => 'email',
+            'contact_detail' => 'test@example.com',
+            'frequency' => 'once',
+        ];
+
+        $response = $this->actingAs($user)
+            ->withHeaders(['Accept' => 'application/json'])
+            ->postJson(route('currency-alert.store'), $payload);
+
+        $response->assertStatus(201)
+            ->assertJsonFragment([
+                'notify_on_change' => true,
+            ]);
+
+        $this->assertDatabaseHas('alerts', [
+            'user_id' => $user->id,
+            'exchange_source_id' => $source->id,
+            'condition' => 'below',
+            'notify_on_change' => 1,
+            'last_seen_price' => 3.977,
+        ]);
+    }
+
+    public function test_deactivate_alert_returns_json_and_marks_inactive()
+    {
+        $user = User::factory()->create();
+        $source = $this->createSource();
+        $alert = Alert::create([
+            'user_id' => $user->id,
+            'exchange_source_id' => $source->id,
+            'target_price' => 3.900,
+            'condition' => 'below',
+            'channel' => 'email',
+            'contact_detail' => 'test@example.com',
+            'status' => 'active',
+            'frequency' => 'recurring',
+            'recurring_popup_pending' => true,
+        ]);
+
+        $response = $this->actingAs($user)
+            ->withHeaders(['Accept' => 'application/json'])
+            ->patchJson(route('currency-alert.deactivate', $alert->id));
+
+        $response->assertOk()
+            ->assertJson([
+                'message' => 'Alerta desactivada exitosamente!',
+                'alert_id' => $alert->id,
+            ]);
+
+        $this->assertDatabaseHas('alerts', [
+            'id' => $alert->id,
+            'status' => 'inactive',
+            'recurring_popup_pending' => 0,
+        ]);
+    }
+
+    public function test_first_whatsapp_alert_requires_registration_prompt_only_once()
+    {
+        $guestId = 'guest-wa-registry';
+        $source = $this->createSource();
+        $this->bindGuestService($guestId, 'pro');
+
+        $payload = [
+            'exchange_source_id' => $source->id,
+            'target_price' => 3.700,
+            'condition' => 'above',
+            'channel' => 'whatsapp',
+            'contact_phone' => '+51999111222',
+            'frequency' => 'once',
+        ];
+
+        $first = $this->withHeaders(['Accept' => 'application/json'])
+            ->postJson(route('currency-alert.store'), $payload);
+
+        $first->assertStatus(201)
+            ->assertJsonFragment([
+                'whatsapp_registration_required' => true,
+            ]);
+
+        $this->assertDatabaseHas('whatsapp_contacts', [
+            'normalized_phone' => '+51999111222',
+        ]);
+
+        $second = $this->withHeaders(['Accept' => 'application/json'])
+            ->postJson(route('currency-alert.store'), $payload);
+
+        $second->assertStatus(201);
+        $this->assertArrayNotHasKey('whatsapp_registration_required', $second->json());
     }
 }

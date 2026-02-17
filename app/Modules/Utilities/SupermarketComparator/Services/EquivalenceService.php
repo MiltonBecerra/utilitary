@@ -7,11 +7,17 @@ use Illuminate\Support\Str;
 
 class EquivalenceService
 {
+    private const STRONG_MATCH_THRESHOLD = 85.0;
+
     /**
      * @return array{level: 'identical'|'similar'|'none', explain: string}
      */
     public function classify(array $refinement, array $candidate): array
     {
+        if ($this->isStrongTitleMatch($refinement['_query'] ?? null, (string) ($candidate['title'] ?? ''))) {
+            return ['level' => 'identical', 'explain' => 'Coincide por nombre'];
+        }
+
         $brandWanted = $this->norm($refinement['brand'] ?? null);
         $variantWanted = $this->norm($refinement['variant'] ?? null);
         $audienceWanted = $this->norm($refinement['audience'] ?? null);
@@ -222,6 +228,31 @@ class EquivalenceService
         }
 
         return $ratio >= 50;
+    }
+
+    private function isStrongTitleMatch(?string $query, string $title): bool
+    {
+        if ($query === null || trim($query) === '') {
+            return false;
+        }
+
+        $q = $this->normalizeText($query);
+        if ($q === '') {
+            return false;
+        }
+
+        $titleNorm = $this->normalizeText($title);
+        if ($titleNorm === '') {
+            return false;
+        }
+
+        if ($q === $titleNorm) {
+            return true;
+        }
+
+        $percent = 0.0;
+        similar_text($q, $titleNorm, $percent);
+        return $percent >= self::STRONG_MATCH_THRESHOLD;
     }
 
     private function startsWithToken(string $text, string $token): bool

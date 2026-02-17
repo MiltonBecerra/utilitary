@@ -8,16 +8,19 @@ use App\Models\ExchangeSource;
 use App\Models\ExchangeRate;
 use App\Models\Utility;
 use App\Modules\Core\Services\GuestService;
+use App\Modules\Core\Services\WhatsAppRegistryService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 
 class CurrencyAlertController extends Controller
 {
     protected $guestService;
+    protected WhatsAppRegistryService $whatsAppRegistryService;
 
-    public function __construct(GuestService $guestService)
+    public function __construct(GuestService $guestService, WhatsAppRegistryService $whatsAppRegistryService)
     {
         $this->guestService = $guestService;
+        $this->whatsAppRegistryService = $whatsAppRegistryService;
     }
 
     public function index()
@@ -30,12 +33,16 @@ class CurrencyAlertController extends Controller
         }
 
         $alerts = collect();
+        $pendingRecurringAlerts = collect();
         $utility = Utility::where('slug', 'currency-alert')->first();
 
         $lastPhone = null;
         $lastEmail = null;
         if (Auth::check()) {
-            $alerts = Alert::where('user_id', Auth::id())->latest()->get();
+            $alerts = Alert::with('exchangeSource')
+                ->where('user_id', Auth::id())
+                ->latest()
+                ->get();
             $lastPhone = Alert::where('user_id', Auth::id())
                 ->whereNotNull('contact_phone')
                 ->orderByDesc('id')
@@ -47,7 +54,10 @@ class CurrencyAlertController extends Controller
                 ->value('contact_detail');
         } else {
             $guestId = $this->guestService->getGuestId();
-            $alerts = Alert::where('guest_id', $guestId)->latest()->get();
+            $alerts = Alert::with('exchangeSource')
+                ->where('guest_id', $guestId)
+                ->latest()
+                ->get();
             $lastPhone = Alert::where('guest_id', $guestId)
                 ->whereNotNull('contact_phone')
                 ->orderByDesc('id')
@@ -58,9 +68,30 @@ class CurrencyAlertController extends Controller
                 ->orderByDesc('id')
                 ->value('contact_detail');
         }
+
+        $pendingRecurringAlerts = $alerts
+            ->filter(function (Alert $alert) {
+                return $alert->frequency === 'recurring'
+                    && (bool) $alert->recurring_popup_pending
+                    && in_array($alert->status, ['active', 'fallback_email'], true);
+            })
+            ->map(function (Alert $alert) {
+                return [
+                    'id' => $alert->id,
+                    'exchange_source_name' => $alert->exchangeSource->name ?? 'Casa de cambio',
+                    'target_price' => $alert->target_price,
+                    'condition' => $alert->condition,
+                    'channel' => $alert->channel,
+                    'contact_detail' => $alert->contact_detail,
+                    'contact_phone' => $alert->contact_phone,
+                    'last_notified_at' => $alert->last_notified_at?->format('d/m/Y H:i'),
+                ];
+            })
+            ->values();
+
         $comments = $utility ? $utility->comments()->latest()->get() : collect();
 
-        return view('modules.currency_alert.index', compact('sources', 'alerts', 'utility', 'comments', 'lastPhone', 'lastEmail'));
+        return view('modules.currency_alert.index', compact('sources', 'alerts', 'utility', 'comments', 'lastPhone', 'lastEmail', 'pendingRecurringAlerts'));
     }
 
     public function store(Request $request)
@@ -69,6 +100,7 @@ class CurrencyAlertController extends Controller
             'exchange_source_id' => 'required|exists:exchange_sources,id',
             'target_price' => 'required|numeric',
             'condition' => 'required|in:above,below',
+            'notify_on_change' => 'nullable|boolean',
             'channel' => 'required|in:email,whatsapp',
             'contact_detail' => 'exclude_unless:channel,email|required_if:channel,email|email',
             'contact_phone' => 'exclude_unless:channel,whatsapp|required_if:channel,whatsapp|nullable|string',
@@ -76,11 +108,20 @@ class CurrencyAlertController extends Controller
         ]);
 
         $data = $request->all();
+        $data['notify_on_change'] = $request->boolean('notify_on_change');
         if (($data['channel'] ?? '') === 'whatsapp') {
             $data['contact_detail'] = null;
         } else {
             $data['contact_phone'] = null;
         }
+
+        if ($data['notify_on_change']) {
+            $baselinePrice = $this->resolveLatestComparablePrice((int) $data['exchange_source_id'], (string) $data['condition']);
+            $data['last_seen_price'] = $baselinePrice;
+        } else {
+            $data['last_seen_price'] = null;
+        }
+
         $data['status'] = 'active';
         $utility = Utility::where('slug', 'currency-alert')->first();
         $utilityId = $utility?->id;
@@ -140,14 +181,42 @@ class CurrencyAlertController extends Controller
 
         $alert = Alert::create($data)->load('exchangeSource');
 
-        if ($request->expectsJson()) {
-            return response()->json([
-                'message' => 'Alerta creada exitosamente!',
-                'alert' => $this->transformAlertForResponse($alert),
-            ], 201);
+        $registrationNotice = null;
+        if (($data['channel'] ?? '') === 'whatsapp' && !empty($data['contact_phone'])) {
+            $result = $this->whatsAppRegistryService->registerIfFirst(
+                $data['contact_phone'],
+                $data['user_id'] ?? null,
+                $data['guest_id'] ?? null,
+                'currency-alert'
+            );
+
+            if (($result['is_first'] ?? false) && !empty($result['normalized_phone'])) {
+                $registrationNotice = $this->buildWhatsappRegistrationNotice((string) $result['normalized_phone']);
+            }
         }
 
-        return redirect()->back()->with('success', 'Alerta creada exitosamente!');
+        if ($request->expectsJson()) {
+            $response = [
+                'message' => 'Alerta creada exitosamente!',
+                'alert' => $this->transformAlertForResponse($alert),
+            ];
+
+            if ($registrationNotice) {
+                $response['whatsapp_registration_required'] = true;
+                $response['whatsapp_company_number'] = $registrationNotice['company_number'];
+                $response['whatsapp_registration_message'] = $registrationNotice['message'];
+                $response['whatsapp_click_to_chat_url'] = $registrationNotice['click_to_chat_url'];
+            }
+
+            return response()->json($response, 201);
+        }
+
+        $redirect = redirect()->back()->with('success', 'Alerta creada exitosamente!');
+        if ($registrationNotice) {
+            $redirect->with('warning', $registrationNotice['message']);
+        }
+
+        return $redirect;
     }
 
     public function edit($id)
@@ -175,6 +244,7 @@ class CurrencyAlertController extends Controller
             'exchange_source_id' => 'required|exists:exchange_sources,id',
             'target_price' => 'required|numeric',
             'condition' => 'required|in:above,below',
+            'notify_on_change' => 'nullable|boolean',
             'channel' => 'required|in:email,whatsapp',
             'contact_detail' => 'exclude_unless:channel,email|required_if:channel,email|email',
             'contact_phone' => 'exclude_unless:channel,whatsapp|required_if:channel,whatsapp|nullable|string',
@@ -215,11 +285,28 @@ class CurrencyAlertController extends Controller
         }
 
         $data = $request->all();
+        $data['notify_on_change'] = $request->boolean('notify_on_change');
         if (($data['channel'] ?? '') === 'whatsapp') {
             $data['contact_detail'] = null;
         } else {
             $data['contact_phone'] = null;
         }
+
+        $sourceChanged = (int) $alert->exchange_source_id !== (int) $data['exchange_source_id'];
+        $conditionChanged = (string) $alert->condition !== (string) $data['condition'];
+        $enabledChangeDetection = $data['notify_on_change'] && !$alert->notify_on_change;
+        $missingBaseline = $data['notify_on_change'] && $alert->last_seen_price === null;
+
+        if ($data['notify_on_change']) {
+            if ($enabledChangeDetection || $sourceChanged || $conditionChanged || $missingBaseline) {
+                $data['last_seen_price'] = $this->resolveLatestComparablePrice((int) $data['exchange_source_id'], (string) $data['condition']);
+            } else {
+                $data['last_seen_price'] = $alert->last_seen_price;
+            }
+        } else {
+            $data['last_seen_price'] = null;
+        }
+
         if ($alert->status === 'fallback_email' && $alert->channel === 'whatsapp' && $request->channel === 'email') {
             $data['status'] = 'active';
         }
@@ -239,18 +326,7 @@ class CurrencyAlertController extends Controller
 
     public function destroy(Request $request, $id)
     {
-        $alert = Alert::findOrFail($id);
-
-        if (Auth::check()) {
-            if ($alert->user_id !== Auth::id()) {
-                return $this->errorResponse($request, 'No tienes permiso para eliminar esta alerta.');
-            }
-        } else {
-            $guestId = $this->guestService->getGuestId();
-            if ($alert->guest_id !== $guestId) {
-                return $this->errorResponse($request, 'No tienes permiso para eliminar esta alerta.');
-            }
-        }
+        $alert = $this->findOwnedAlert($id);
 
         $alert->delete();
 
@@ -261,6 +337,25 @@ class CurrencyAlertController extends Controller
         return redirect()->back()->with('success', 'Alerta eliminada exitosamente!');
     }
 
+    public function deactivate(Request $request, $id)
+    {
+        $alert = $this->findOwnedAlert($id);
+
+        $alert->update([
+            'status' => 'inactive',
+            'recurring_popup_pending' => false,
+        ]);
+
+        if ($request->expectsJson() || $request->wantsJson() || $request->ajax()) {
+            return response()->json([
+                'message' => 'Alerta desactivada exitosamente!',
+                'alert_id' => $alert->id,
+            ]);
+        }
+
+        return redirect()->back()->with('success', 'Alerta desactivada exitosamente!');
+    }
+
     private function transformAlertForResponse(Alert $alert): array
     {
         return [
@@ -269,6 +364,7 @@ class CurrencyAlertController extends Controller
             'exchange_source_name' => $alert->exchangeSource->name ?? '',
             'target_price' => $alert->target_price,
             'condition' => $alert->condition,
+            'notify_on_change' => (bool) $alert->notify_on_change,
             'channel' => $alert->channel,
             'contact_detail' => $alert->contact_detail,
             'contact_phone' => $alert->contact_phone,
@@ -276,7 +372,23 @@ class CurrencyAlertController extends Controller
             'status' => $alert->status,
             'created_at' => $alert->created_at,
             'created_at_formatted' => $alert->created_at?->format('d/m/Y'),
+            'created_at_ts' => $alert->created_at?->timestamp,
         ];
+    }
+
+    private function resolveLatestComparablePrice(int $exchangeSourceId, string $condition): ?float
+    {
+        $latestRate = ExchangeRate::where('exchange_source_id', $exchangeSourceId)
+            ->latest()
+            ->first();
+
+        if (!$latestRate) {
+            return null;
+        }
+
+        return $condition === 'below'
+            ? (float) $latestRate->sell_price
+            : (float) $latestRate->buy_price;
     }
 
     private function errorResponse(Request $request, string $message, int $status = 422)
@@ -287,7 +399,36 @@ class CurrencyAlertController extends Controller
 
         return redirect()->back()->withErrors(['msg' => $message]);
     }
+
+    private function buildWhatsappRegistrationNotice(string $normalizedPhone): array
+    {
+        $companyNumber = $this->whatsAppRegistryService->getCompanyNumber();
+        $message = $this->whatsAppRegistryService->getCompanyMessage($normalizedPhone);
+
+        return [
+            'company_number' => $companyNumber,
+            'message' => "Importante: para activar WhatsApp escribe primero al numero de la empresa {$companyNumber}.",
+            'click_to_chat_url' => $this->whatsAppRegistryService->getCompanyClickToChatUrl($message),
+        ];
+    }
+
+    private function findOwnedAlert($id): Alert
+    {
+        $alert = Alert::findOrFail($id);
+
+        if (Auth::check()) {
+            if ((int) $alert->user_id !== (int) Auth::id()) {
+                abort(403, 'No tienes permiso para acceder a esta alerta.');
+            }
+
+            return $alert;
+        }
+
+        $guestId = $this->guestService->getGuestId();
+        if ((string) $alert->guest_id !== (string) $guestId) {
+            abort(403, 'No tienes permiso para acceder a esta alerta.');
+        }
+
+        return $alert;
+    }
 }
-
-
-

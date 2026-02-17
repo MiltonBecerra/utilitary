@@ -248,7 +248,7 @@
                 </div>
             @endif
 
-            <div class="smc-selection-wrapper">
+            <div class="smc-selection-wrapper smc-comparison-block">
                 <div class="smc-selection-summary mb-3">
                     <div class="d-flex align-items-center justify-content-between">
                         <div class="font-weight-bold">Seleccionados: <span class="smc-selected-count">0</span></div>
@@ -278,12 +278,19 @@
                     @endif
                 </div>
 
+                <div class="d-flex justify-content-end mb-2">
+                    <div class="btn-group btn-group-sm" role="group" aria-label="Ordenar resultados">
+                        <button type="button" class="btn btn-outline-secondary smc-sort-action" data-sort-order="cheap">Mas barato</button>
+                        <button type="button" class="btn btn-outline-secondary smc-sort-action" data-sort-order="expensive">Mas caro</button>
+                    </div>
+                </div>
+
                 <h5 class="mb-2">Idénticos (ranking principal)</h5>
             @if (empty($identical))
                 <div class="text-muted">Aún no hay resultados idénticos. (Integración de tiendas en progreso o refinamiento insuficiente.)</div>
             @else
                 <div class="table-responsive smc-selection-scope">
-                    <table class="table table-sm table-striped">
+                    <table class="table table-sm table-striped smc-sortable-table">
                         <thead>
                             <tr>
                                 <th class="text-center">Sel</th>
@@ -298,7 +305,8 @@
                         </thead>
                         <tbody>
                             @foreach ($identical as $row)
-                                <tr>
+                                @php $sortPrice = (float) (($row['card_price'] ?? 0) > 0 ? $row['card_price'] : ($row['price'] ?? 0)); @endphp
+                                <tr data-sort-price="{{ $sortPrice }}">
                                     <td class="text-center align-middle">
                                         <input class="smc-select-item" type="checkbox" data-store="{{ (string) ($row['store'] ?? '') }}" data-store-label="{{ (string) ($row['store'] ?? '') }}" data-title="{{ (string) ($row['title'] ?? '') }}" data-url="{{ (string) ($row['url'] ?? '') }}" data-image="{{ (string) ($row['image_url'] ?? '') }}" data-price="{{ (float) ($row['price'] ?? 0) }}" data-card-price="{{ (float) ($row['card_price'] ?? 0) }}">
                                     </td>
@@ -358,7 +366,7 @@
                 <div class="text-muted">No hay alternativas similares para mostrar.</div>
             @else
                 <div class="table-responsive smc-selection-scope">
-                    <table class="table table-sm table-striped">
+                    <table class="table table-sm table-striped smc-sortable-table">
                         <thead>
                             <tr>
                                 <th class="text-center">Sel</th>
@@ -373,7 +381,8 @@
                         </thead>
                         <tbody>
                             @foreach ($similar as $row)
-                                <tr>
+                                @php $sortPrice = (float) (($row['card_price'] ?? 0) > 0 ? $row['card_price'] : ($row['price'] ?? 0)); @endphp
+                                <tr data-sort-price="{{ $sortPrice }}">
                                     <td class="text-center align-middle">
                                         <input class="smc-select-item" type="checkbox" data-store="{{ (string) ($row['store'] ?? '') }}" data-store-label="{{ (string) ($row['store'] ?? '') }}" data-title="{{ (string) ($row['title'] ?? '') }}" data-url="{{ (string) ($row['url'] ?? '') }}" data-image="{{ (string) ($row['image_url'] ?? '') }}" data-price="{{ (float) ($row['price'] ?? 0) }}" data-card-price="{{ (float) ($row['card_price'] ?? 0) }}">
                                     </td>
@@ -429,7 +438,7 @@
                     <hr>
                     <h5 class="mb-2">Combos / promociones condicionadas (informativo)</h5>
                     <div class="table-responsive smc-selection-scope">
-                        <table class="table table-sm table-striped">
+                        <table class="table table-sm table-striped smc-sortable-table">
                             <thead>
                                 <tr>
                                     <th class="text-center">Sel</th>
@@ -443,7 +452,8 @@
                             </thead>
                             <tbody>
                                 @foreach ($combos as $row)
-                                    <tr>
+                                    @php $sortPrice = (float) (($row['card_price'] ?? 0) > 0 ? $row['card_price'] : ($row['price'] ?? 0)); @endphp
+                                    <tr data-sort-price="{{ $sortPrice }}">
                                         <td class="text-center align-middle">
                                         <input class="smc-select-item" type="checkbox" data-store="{{ (string) ($row['store'] ?? '') }}" data-store-label="{{ (string) ($row['store'] ?? '') }}" data-title="{{ (string) ($row['title'] ?? '') }}" data-url="{{ (string) ($row['url'] ?? '') }}" data-image="{{ (string) ($row['image_url'] ?? '') }}" data-price="{{ (float) ($row['price'] ?? 0) }}" data-card-price="{{ (float) ($row['card_price'] ?? 0) }}">
                                         </td>

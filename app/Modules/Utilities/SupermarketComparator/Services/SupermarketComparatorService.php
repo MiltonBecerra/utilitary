@@ -53,7 +53,6 @@ class SupermarketComparatorService
     {
         $signals = $this->normalizer->normalizeQuery($query);
         $suggestedRefinement = $this->normalizer->suggestRefinementFromQuery($query);
-        $ambiguity = $this->ambiguityDetector->analyze($query, $signals);
 
         $errors = [];
         $errorStoreCodes = [];
@@ -258,6 +257,17 @@ class SupermarketComparatorService
                 $this->requestGuard->onFailure($code, $message);
             }
         }
+
+        $allCandidates = [];
+        foreach ($candidatesByStore as $items) {
+            foreach ((array) $items as $candidate) {
+                if (is_array($candidate)) {
+                    $allCandidates[] = $candidate;
+                }
+            }
+        }
+
+        $ambiguity = $this->ambiguityDetector->analyze($query, $signals, $allCandidates);
 
         $contextToken = (string) Str::uuid();
         $context = [

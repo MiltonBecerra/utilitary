@@ -1,0 +1,6 @@
+2026/01/27-01:57:49.265 3f90 Reusing MANIFEST C:\xampp\htdocs\utilitary\.whatsapp-profile\Default\Local Storage\leveldb/MANIFEST-000001
+2026/01/27-01:57:49.272 3f90 Recovering log #4
+2026/01/27-01:57:49.275 3f90 Reusing old log C:\xampp\htdocs\utilitary\.whatsapp-profile\Default\Local Storage\leveldb/000004.log 
+2026/01/27-02:00:49.807 612c Level-0 table #7: started
+2026/01/27-02:00:49.820 612c Level-0 table #7: 15278 bytes OK
+2026/01/27-02:00:49.823 612c Delete type=0 #4

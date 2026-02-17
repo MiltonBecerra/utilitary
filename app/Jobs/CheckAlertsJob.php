@@ -56,6 +56,14 @@ class CheckAlertsJob implements ShouldQueue
                 continue;
             }
 
+            if ($alert->frequency === 'recurring' && $this->hasRecurringWindowExpired($alert, $now)) {
+                $alert->update([
+                    'status' => 'triggered',
+                    'recurring_popup_pending' => false,
+                ]);
+                continue;
+            }
+
             // Determine which price to compare (Buy or Sell?)
             // Usually users want to buy dollars (Sell price of the casa de cambio) or sell dollars (Buy price of the casa de cambio).
             // Let's assume the user sets a target for the "Sell" price (what they pay to buy USD) or "Buy" price (what they get for selling USD).
@@ -69,15 +77,35 @@ class CheckAlertsJob implements ShouldQueue
             
             $currentPrice = ($alert->condition == 'below') ? $latestRate->sell_price : $latestRate->buy_price;
 
-            $triggered = false;
+            $triggeredByTarget = false;
             if ($alert->condition == 'above' && $currentPrice >= $alert->target_price) {
-                $triggered = true;
+                $triggeredByTarget = true;
             } elseif ($alert->condition == 'below' && $currentPrice <= $alert->target_price) {
-                $triggered = true;
+                $triggeredByTarget = true;
             }
+
+            $triggeredByChange = false;
+            if ($alert->notify_on_change) {
+                $lastSeenPrice = $alert->last_seen_price;
+                if ($lastSeenPrice !== null) {
+                    $currentRounded = round((float) $currentPrice, 3);
+                    $lastSeenRounded = round((float) $lastSeenPrice, 3);
+
+                    if ($alert->condition == 'above') {
+                        $triggeredByChange = $currentRounded > $lastSeenRounded;
+                    } else {
+                        $triggeredByChange = $currentRounded < $lastSeenRounded;
+                    }
+                }
+            }
+
+            $triggered = $triggeredByTarget || $triggeredByChange;
 
             if ($triggered) {
                 if (!$this->canNotify($alert, $now)) {
+                    if ($alert->notify_on_change) {
+                        $alert->update(['last_seen_price' => $currentPrice]);
+                    }
                     continue;
                 }
 
@@ -86,7 +114,13 @@ class CheckAlertsJob implements ShouldQueue
                 
                 if ($alert->frequency == 'once') {
                     $alert->update(['status' => 'triggered']);
+                } else {
+                    $alert->update(['recurring_popup_pending' => true]);
                 }
+            }
+
+            if ($alert->notify_on_change) {
+                $alert->update(['last_seen_price' => $currentPrice]);
             }
         }
 
@@ -95,12 +129,20 @@ class CheckAlertsJob implements ShouldQueue
 
     protected function canNotify(Alert $alert, Carbon $now): bool
     {
-        if ($alert->frequency === 'recurring' && !$this->canUseRecurringForAlert($alert)) {
+        if ($alert->frequency !== 'recurring') {
+            return true;
+        }
+
+        if ($this->hasRecurringWindowExpired($alert, $now)) {
+            $alert->update([
+                'status' => 'triggered',
+                'recurring_popup_pending' => false,
+            ]);
             return false;
         }
 
-        if ($alert->frequency !== 'recurring') {
-            return true;
+        if (!$this->canUseRecurringForAlert($alert)) {
+            return false;
         }
 
         $lastNotified = $alert->last_notified_at;
@@ -127,11 +169,32 @@ class CheckAlertsJob implements ShouldQueue
             $dailyCount = 0;
         }
 
-        $alert->update([
+        $updates = [
             'last_notified_at' => $now,
             'daily_notified_date' => $dailyDate,
             'daily_notified_count' => $dailyCount + 1,
-        ]);
+        ];
+
+        if ($alert->frequency === 'recurring' && !$alert->recurring_window_started_at) {
+            $updates['recurring_window_started_at'] = $now;
+        }
+
+        $alert->update($updates);
+    }
+
+    protected function hasRecurringWindowExpired(Alert $alert, Carbon $now): bool
+    {
+        if ($alert->frequency !== 'recurring') {
+            return false;
+        }
+
+        if (!$alert->recurring_window_started_at) {
+            return false;
+        }
+
+        $windowEnd = $alert->recurring_window_started_at->copy()->addDays(2);
+
+        return $now->greaterThanOrEqualTo($windowEnd);
     }
 
     protected function sendNotification($alert, $rate)

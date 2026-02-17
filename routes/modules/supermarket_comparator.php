@@ -9,6 +9,8 @@ Route::get('/supermarket-comparator/brands', [SupermarketComparatorController::c
 Route::post('/supermarket-comparator/search', [SupermarketComparatorController::class, 'search'])->name('supermarket-comparator.search');
 Route::post('/supermarket-comparator/retry-search', [SupermarketComparatorController::class, 'retrySearch'])->name('supermarket-comparator.retry-search');
 Route::post('/supermarket-comparator/compare', [SupermarketComparatorController::class, 'compare'])->name('supermarket-comparator.compare');
+Route::post('/supermarket-comparator/fill-cart', [SupermarketComparatorController::class, 'fillCart'])->name('supermarket-comparator.fill-cart');
+Route::get('/supermarket-comparator/fill-cart/jobs/{jobUuid}', [SupermarketComparatorController::class, 'agentJobStatus'])->name('supermarket-comparator.fill-cart.job-status');
 Route::post('/supermarket-comparator/purchases', [SupermarketComparatorController::class, 'savePurchase'])->name('supermarket-comparator.purchases.store');
 Route::get('/supermarket-comparator/purchases/{purchase}', [SupermarketComparatorController::class, 'showPurchase'])->name('supermarket-comparator.purchases.show');
 Route::get('/supermarket-comparator/purchases/{purchase}/run', [SupermarketComparatorController::class, 'runPurchase'])->name('supermarket-comparator.purchases.run');

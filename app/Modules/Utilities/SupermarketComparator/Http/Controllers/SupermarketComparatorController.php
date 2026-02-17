@@ -4,6 +4,8 @@ namespace App\Modules\Utilities\SupermarketComparator\Http\Controllers;
 
 use App\Http\Controllers\Controller;
 use App\Models\Utility;
+use App\Models\SmcAgentJob;
+use App\Models\SmcAgentJobItem;
 use App\Models\SmcPurchase;
 use App\Models\SmcPurchaseItem;
 use App\Modules\Core\Services\GuestService;
@@ -12,6 +14,7 @@ use App\Modules\Utilities\SupermarketComparator\Services\SupermarketComparatorSe
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 class SupermarketComparatorController extends Controller
@@ -383,6 +386,116 @@ class SupermarketComparatorController extends Controller
         }
 
         return view('modules.supermarket_comparator.index', $viewData);
+    }
+
+    public function fillCart(Request $request)
+    {
+        $validated = $request->validate([
+            'store' => 'required|string|in:plaza_vea',
+            'device_id' => 'required|string|max:120',
+            'items' => 'required|array|min:1|max:50',
+            'items.*.url' => 'required|string|max:2000',
+            'items.*.title' => 'nullable|string|max:255',
+            'items.*.quantity' => 'nullable|numeric|min:0.01|max:9999',
+            'items.*.store' => 'nullable|string|max:50',
+            'items.*.store_label' => 'nullable|string|max:80',
+        ]);
+
+        if (!Auth::check() && !$this->guestService->hasAcceptedTerms()) {
+            return response()->json([
+                'message' => 'Debes aceptar los términos y la política de privacidad para continuar.',
+            ], 403);
+        }
+
+        $store = strtolower(trim((string) $validated['store']));
+        $items = array_values(array_filter($validated['items'] ?? [], function ($item) {
+            return is_array($item) && !empty($item['url']);
+        }));
+
+        if (empty($items)) {
+            return response()->json(['message' => 'No hay productos válidos para llenar el carrito.'], 422);
+        }
+
+        $payloadItems = array_map(function ($item) {
+            return [
+                'store' => (string) ($item['store'] ?? ''),
+                'store_label' => (string) ($item['store_label'] ?? ''),
+                'url' => (string) ($item['url'] ?? ''),
+                'title' => (string) ($item['title'] ?? ''),
+                'quantity' => (float) ($item['quantity'] ?? 1),
+            ];
+        }, $items);
+
+        $job = DB::transaction(function () use ($validated, $store, $payloadItems) {
+            $job = SmcAgentJob::create([
+                'uuid' => (string) Str::uuid(),
+                'user_id' => auth()->id(),
+                'guest_id' => auth()->check() ? null : $this->guestService->getGuestId(),
+                'device_id' => trim((string) $validated['device_id']),
+                'store' => $store,
+                'status' => 'pending',
+                'items' => $payloadItems,
+                'progress' => null,
+                'result' => null,
+                'error_message' => null,
+            ]);
+
+            foreach ($payloadItems as $item) {
+                SmcAgentJobItem::create([
+                    'job_id' => $job->id,
+                    'store' => trim((string) ($item['store'] ?? '')) ?: $store,
+                    'store_label' => trim((string) ($item['store_label'] ?? '')) ?: strtoupper($store),
+                    'title' => (string) ($item['title'] ?? ''),
+                    'url' => (string) ($item['url'] ?? ''),
+                    'quantity' => (float) ($item['quantity'] ?? 1),
+                ]);
+            }
+
+            return $job;
+        });
+
+        return response()->json([
+            'queued' => true,
+            'job' => [
+                'id' => $job->id,
+                'uuid' => $job->uuid,
+                'status' => $job->status,
+                'store' => $job->store,
+                'items_count' => count($payloadItems),
+            ],
+            'message' => 'Solicitud enviada al agente local. Esperando ejecución.',
+        ]);
+    }
+
+    public function agentJobStatus(Request $request, string $jobUuid)
+    {
+        $job = SmcAgentJob::where('uuid', $jobUuid)->first();
+        if (!$job) {
+            return response()->json(['message' => 'Job no encontrado.'], 404);
+        }
+
+        if (auth()->check()) {
+            if ((int) $job->user_id !== (int) auth()->id()) {
+                return response()->json(['message' => 'No autorizado.'], 403);
+            }
+        } else {
+            if ((string) ($job->guest_id ?? '') !== (string) $this->guestService->getGuestId()) {
+                return response()->json(['message' => 'No autorizado.'], 403);
+            }
+        }
+
+        return response()->json([
+            'job' => [
+                'uuid' => $job->uuid,
+                'status' => $job->status,
+                'progress' => $job->progress,
+                'result' => $job->result,
+                'error_message' => $job->error_message,
+                'started_at' => optional($job->started_at)->toIso8601String(),
+                'completed_at' => optional($job->completed_at)->toIso8601String(),
+                'failed_at' => optional($job->failed_at)->toIso8601String(),
+            ],
+        ]);
     }
 
     public function savePurchase(Request $request)

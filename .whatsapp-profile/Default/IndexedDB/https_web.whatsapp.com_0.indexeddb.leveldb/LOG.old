@@ -1,0 +1,60 @@
+2026/01/27-01:57:49.773 1b538 Reusing MANIFEST C:\xampp\htdocs\utilitary\.whatsapp-profile\Default\IndexedDB\https_web.whatsapp.com_0.indexeddb.leveldb/MANIFEST-000001
+2026/01/27-01:57:49.773 1b538 Recovering log #527
+2026/01/27-01:57:49.789 1b538 Reusing old log C:\xampp\htdocs\utilitary\.whatsapp-profile\Default\IndexedDB\https_web.whatsapp.com_0.indexeddb.leveldb/000527.log 
+2026/01/27-01:59:09.268 ec04 Level-0 table #552: started
+2026/01/27-01:59:09.332 ec04 Level-0 table #552: 1178570 bytes OK
+2026/01/27-01:59:09.334 ec04 Delete type=0 #527
+2026/01/27-01:59:09.493 1b538 Compacting 1@0 + 0@1 files
+2026/01/27-01:59:09.530 1b538 Generated table #553@0: 28327 keys, 553287 bytes
+2026/01/27-01:59:09.539 1b538 Generated table #554@0: 124 keys, 9336 bytes
+2026/01/27-01:59:09.539 1b538 Compacted 1@0 + 0@1 files => 562623 bytes
+2026/01/27-01:59:09.541 1b538 compacted to: files[ 0 2 20 0 0 0 0 ]
+2026/01/27-01:59:09.541 1b538 Delete type=2 #552
+2026/01/27-01:59:09.599 1b538 Compacting 1@1 + 10@2 files
+2026/01/27-01:59:09.678 1b538 Generated table #555@1: 60535 keys, 2247630 bytes
+2026/01/27-01:59:09.721 1b538 Generated table #556@1: 7334 keys, 2160949 bytes
+2026/01/27-01:59:09.760 1b538 Generated table #557@1: 2989 keys, 2152283 bytes
+2026/01/27-01:59:09.802 1b538 Generated table #558@1: 3105 keys, 2156512 bytes
+2026/01/27-01:59:09.842 1b538 Generated table #559@1: 2127 keys, 2155580 bytes
+2026/01/27-01:59:09.877 1b538 Generated table #560@1: 2616 keys, 2151078 bytes
+2026/01/27-01:59:09.921 1b538 Generated table #561@1: 3790 keys, 2161636 bytes
+2026/01/27-01:59:09.960 1b538 Generated table #562@1: 3601 keys, 2161721 bytes
+2026/01/27-01:59:10.034 1b538 Generated table #563@1: 34129 keys, 2238962 bytes
+2026/01/27-01:59:10.110 1b538 Generated table #564@1: 26526 keys, 2267398 bytes
+2026/01/27-01:59:10.129 1b538 Generated table #565@1: 2196 keys, 163931 bytes
+2026/01/27-01:59:10.129 1b538 Compacted 1@1 + 10@2 files => 22017680 bytes
+2026/01/27-01:59:10.131 1b538 compacted to: files[ 0 1 21 0 0 0 0 ]
+2026/01/27-01:59:10.232 1b538 Compacting 1@1 + 10@2 files
+2026/01/27-01:59:10.308 1b538 Generated table #566@1: 31900 keys, 2245312 bytes
+2026/01/27-01:59:10.368 1b538 Generated table #567@1: 14033 keys, 2204956 bytes
+2026/01/27-01:59:10.410 1b538 Generated table #568@1: 9401 keys, 2132947 bytes
+2026/01/27-01:59:10.489 1b538 Generated table #569@1: 78623 keys, 2222211 bytes
+2026/01/27-01:59:10.588 1b538 Generated table #570@1: 101145 keys, 2251885 bytes
+2026/01/27-01:59:10.674 1b538 Generated table #571@1: 100784 keys, 2250270 bytes
+2026/01/27-01:59:10.791 1b538 Generated table #572@1: 100348 keys, 2251625 bytes
+2026/01/27-01:59:10.899 1b538 Generated table #573@1: 100404 keys, 2249376 bytes
+2026/01/27-01:59:10.924 1b538 Generated table #574@1: 11098 keys, 414218 bytes
+2026/01/27-01:59:10.924 1b538 Compacted 1@1 + 10@2 files => 18222800 bytes
+2026/01/27-01:59:10.925 1b538 compacted to: files[ 0 0 20 0 0 0 0 ]
+2026/01/27-01:59:10.926 1b538 Delete type=2 #220
+2026/01/27-01:59:10.926 1b538 Delete type=2 #531
+2026/01/27-01:59:10.926 1b538 Delete type=2 #532
+2026/01/27-01:59:10.926 1b538 Delete type=2 #533
+2026/01/27-01:59:10.926 1b538 Delete type=2 #534
+2026/01/27-01:59:10.927 1b538 Delete type=2 #535
+2026/01/27-01:59:10.927 1b538 Delete type=2 #536
+2026/01/27-01:59:10.927 1b538 Delete type=2 #537
+2026/01/27-01:59:10.927 1b538 Delete type=2 #538
+2026/01/27-01:59:10.927 1b538 Delete type=2 #539
+2026/01/27-01:59:10.927 1b538 Delete type=2 #540
+2026/01/27-01:59:10.927 1b538 Delete type=2 #541
+2026/01/27-01:59:10.927 1b538 Delete type=2 #542
+2026/01/27-01:59:10.927 1b538 Delete type=2 #543
+2026/01/27-01:59:10.927 1b538 Delete type=2 #544
+2026/01/27-01:59:10.927 1b538 Delete type=2 #545
+2026/01/27-01:59:10.927 1b538 Delete type=2 #546
+2026/01/27-01:59:10.927 1b538 Delete type=2 #547
+2026/01/27-01:59:10.927 1b538 Delete type=2 #548
+2026/01/27-01:59:10.927 1b538 Delete type=2 #549
+2026/01/27-01:59:10.927 1b538 Delete type=2 #553
+2026/01/27-01:59:10.927 1b538 Delete type=2 #554

@@ -16,9 +16,13 @@ use Illuminate\Support\Facades\Route;
 
 
 use App\Modules\Core\Http\Controllers\PaymentController;
+use App\Modules\Utilities\SupermarketComparator\Http\Controllers\SmcAgentApiController;
 
 Route::middleware('auth:sanctum')->get('/user', function (Request $request) {
     return $request->user();
 });
 
 Route::match(['get', 'post'], '/payments/webhook', [PaymentController::class, 'webhook'])->name('payments.webhook');
+
+Route::get('/smc/agent/jobs/next', [SmcAgentApiController::class, 'nextJob']);
+Route::post('/smc/agent/jobs/{jobId}/status', [SmcAgentApiController::class, 'updateStatus']);

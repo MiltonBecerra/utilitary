@@ -311,14 +311,15 @@ class OfferPriceScraperService
     {
         try {
             // URL de tu API local (ajusta según tu configuración)
-            $localApiUrl = config('services.puppeteer.local_api_url', 'http://localhost:3001/scrape/ripley');
+            $localApiUrl = config('services.puppeteer.local_api_url', 'http://localhost:3001');
+            $endpoint = $this->resolvePuppeteerEndpoint($localApiUrl, 'ripley');
             
-            $response = $this->client->post($localApiUrl, [
+            $response = $this->client->post($endpoint, [
                 'json' => [
                     'url' => $url,
                     'searchParams' => []
                 ],
-                'timeout' => 30,
+                'timeout' => (int) config('services.puppeteer.timeout', 30),
                 'headers' => [
                     'Content-Type' => 'application/json',
                     'User-Agent' => 'Utilitary-Server/1.0',
@@ -374,6 +375,16 @@ class OfferPriceScraperService
             ]);
             return null;
         }
+    }
+
+    private function resolvePuppeteerEndpoint(string $baseUrl, string $store): string
+    {
+        $baseUrl = rtrim($baseUrl, '/');
+        if (str_contains($baseUrl, '/scrape/')) {
+            return $baseUrl;
+        }
+
+        return $baseUrl . '/scrape/' . $store;
     }
 
     private function cleanupPuppeteerProfiles(string $baseDir): void

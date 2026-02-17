@@ -33,6 +33,14 @@ class CheckOfferAlerts extends Command
 
         foreach ($alerts as $alert) {
             try {
+                if ($alert->frequency === 'recurring' && $this->hasRecurringWindowExpired($alert)) {
+                    $alert->update([
+                        'status' => 'triggered',
+                        'recurring_popup_pending' => false,
+                    ]);
+                    continue;
+                }
+
                 $previousPrice = $alert->current_price !== null ? (float) $alert->current_price : null;
                 $plan = $this->resolvePlanForAlert($alert, $utilityId);
 
@@ -110,13 +118,23 @@ class CheckOfferAlerts extends Command
                         ->notify(new OfferAlertTriggered($alert, $selected));
                 }
 
-                // Guardar último precio notificado
-                $alert->update(['last_notified_price' => $selected]);
+                $updates = [
+                    'last_notified_price' => $selected,
+                    'last_notified_at' => now(),
+                ];
 
-                // Free: solo 1 correo por alerta
-                if ($plan === 'free') {
-                    $alert->update(['status' => 'triggered']);
+                if ($alert->frequency === 'recurring') {
+                    if (!$alert->recurring_window_started_at) {
+                        $updates['recurring_window_started_at'] = now();
+                    }
+
+                    $updates['recurring_popup_pending'] = true;
+                } else {
+                    $updates['status'] = 'triggered';
+                    $updates['recurring_popup_pending'] = false;
                 }
+
+                $alert->update($updates);
             } catch (\Throwable $e) {
                 Log::error('offer_alert_check_failed', ['offer_alert_id' => $alert->id, 'error' => $e->getMessage()]);
             }
@@ -156,7 +174,7 @@ class CheckOfferAlerts extends Command
     protected function shouldNotify(OfferAlert $alert, float $currentPrice, ?float $previousPrice, string $plan): bool
     {
         // Free: 1 correo por alerta (si ya notificó una vez, no notificar más)
-        if ($plan === 'free' && $alert->last_notified_price !== null) {
+        if ($plan === 'free' && $alert->frequency !== 'recurring' && $alert->last_notified_price !== null) {
             return false;
         }
 
@@ -185,6 +203,19 @@ class CheckOfferAlerts extends Command
         }
 
         return false;
+    }
+
+    protected function hasRecurringWindowExpired(OfferAlert $alert): bool
+    {
+        if ($alert->frequency !== 'recurring') {
+            return false;
+        }
+
+        if (!$alert->recurring_window_started_at) {
+            return false;
+        }
+
+        return now()->greaterThanOrEqualTo($alert->recurring_window_started_at->copy()->addDays(2));
     }
 }
 

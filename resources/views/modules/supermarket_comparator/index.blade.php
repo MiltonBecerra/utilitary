@@ -254,6 +254,29 @@
     .page-title { font-size: 1.4rem; }
     .page-subtitle { font-size: 0.95rem; }
 }
+.smc-modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.5);
+    z-index: 1050;
+}
+.smc-modal {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    z-index: 1060;
+}
+.smc-modal-card {
+    background: var(--fx-surface);
+    border: 1px solid var(--fx-border);
+    border-radius: 16px;
+    box-shadow: var(--fx-shadow-lg);
+    width: min(560px, 100%);
+    padding: 20px;
+}
 </style>
 
 @php
@@ -446,6 +469,39 @@
                                     </div>
                                 </div>
                             @endif
+                            <div class="mt-2">
+                                <button class="btn btn-sm btn-success smc-fill-cart" type="button">
+                                    <i class="fas fa-shopping-cart mr-1"></i> Llenar carrito
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="smc-fill-cart-backdrop" class="smc-modal-backdrop d-none"></div>
+                <div id="smc-fill-cart-modal" class="smc-modal d-none" role="dialog" aria-modal="true" aria-labelledby="smc-fill-cart-title">
+                    <div class="smc-modal-card">
+                        <div class="d-flex align-items-center justify-content-between mb-3">
+                            <h5 class="mb-0" id="smc-fill-cart-title">Llenar carrito</h5>
+                            <button class="btn btn-sm btn-outline-secondary smc-fill-cart-close" type="button">Cerrar</button>
+                        </div>
+                        <div class="form-group">
+                            <label for="smc-fill-cart-store">Tienda</label>
+                            <select id="smc-fill-cart-store" class="form-control form-control-sm"></select>
+                            <small class="text-muted d-block mt-1">Por ahora solo Plaza Vea.</small>
+                        </div>
+                        <div class="form-group">
+                            <label for="smc-agent-device-id">Device ID del agente local</label>
+                            <input id="smc-agent-device-id" class="form-control form-control-sm" type="text" maxlength="120" placeholder="Pega aquí el device_id del SMC Agent">
+                            <small class="text-muted d-block mt-1">Encuéntralo en el archivo config.json del SMC Agent.</small>
+                        </div>
+                        <div class="smc-fill-cart-summary text-muted small"></div>
+                        <div class="smc-fill-cart-feedback alert d-none mt-3" role="alert"></div>
+                        <div class="d-flex justify-content-end mt-3">
+                            <button class="btn btn-sm btn-outline-secondary smc-fill-cart-cancel" type="button">Cancelar</button>
+                            <button class="btn btn-sm btn-primary ml-2 smc-fill-cart-run" type="button">
+                                <i class="fas fa-play mr-1"></i> Iniciar
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -602,6 +658,15 @@ document.addEventListener('DOMContentLoaded', function () {
     const globalTotalCard = globalSummary ? globalSummary.querySelector('.smc-global-total-card') : null;
     const globalItemsBody = globalSummary ? globalSummary.querySelector('.smc-global-items-body') : null;
     const globalStoreTotalsBody = globalSummary ? globalSummary.querySelector('.smc-global-store-totals-body') : null;
+    const fillCartModal = document.getElementById('smc-fill-cart-modal');
+    const fillCartBackdrop = document.getElementById('smc-fill-cart-backdrop');
+    const fillCartStoreSelect = document.getElementById('smc-fill-cart-store');
+    const fillCartDeviceInput = document.getElementById('smc-agent-device-id');
+    const fillCartSummary = document.querySelector('.smc-fill-cart-summary');
+    const fillCartFeedback = document.querySelector('.smc-fill-cart-feedback');
+    const fillCartDeviceStorageKey = 'smc-agent-device-id';
+    let fillCartPollTimer = null;
+    let fillCartItems = [];
 
     const updateGlobalSelectionSummary = () => {
         if (!globalSummary || !resultsWrap) return;
@@ -918,6 +983,175 @@ document.addEventListener('DOMContentLoaded', function () {
         return items;
     };
 
+    const openFillCartModal = (items) => {
+        if (!fillCartModal || !fillCartBackdrop || !fillCartStoreSelect) return;
+        fillCartItems = items || [];
+        if (fillCartPollTimer) {
+            clearTimeout(fillCartPollTimer);
+            fillCartPollTimer = null;
+        }
+        const storeCounts = {};
+        fillCartItems.forEach((item) => {
+            const code = (item.store || '').toString().toLowerCase();
+            if (!code) return;
+            storeCounts[code] = (storeCounts[code] || 0) + 1;
+        });
+
+        const allowedStores = Object.keys(storeCounts).filter((s) => s === 'plaza_vea');
+        fillCartStoreSelect.innerHTML = '';
+        allowedStores.forEach((store) => {
+            const opt = document.createElement('option');
+            opt.value = store;
+            opt.textContent = store === 'plaza_vea' ? 'Plaza Vea' : store;
+            fillCartStoreSelect.appendChild(opt);
+        });
+
+        const total = fillCartItems.length;
+        const plazaCount = storeCounts.plaza_vea || 0;
+        if (fillCartSummary) {
+            fillCartSummary.textContent = `Seleccionados: ${total}. Plaza Vea: ${plazaCount}.`;
+        }
+        if (fillCartFeedback) {
+            fillCartFeedback.classList.add('d-none');
+            fillCartFeedback.textContent = '';
+        }
+        if (fillCartDeviceInput) {
+            const savedDeviceId = localStorage.getItem(fillCartDeviceStorageKey) || '';
+            fillCartDeviceInput.value = savedDeviceId;
+        }
+
+        const runButton = fillCartModal.querySelector('.smc-fill-cart-run');
+        if (runButton) {
+            runButton.disabled = allowedStores.length === 0;
+        }
+        fillCartBackdrop.classList.remove('d-none');
+        fillCartModal.classList.remove('d-none');
+    };
+
+    const closeFillCartModal = () => {
+        if (!fillCartModal || !fillCartBackdrop) return;
+        if (fillCartPollTimer) {
+            clearTimeout(fillCartPollTimer);
+            fillCartPollTimer = null;
+        }
+        fillCartBackdrop.classList.add('d-none');
+        fillCartModal.classList.add('d-none');
+    };
+
+    const setFillCartFeedback = (message, isError) => {
+        if (!fillCartFeedback) return;
+        fillCartFeedback.classList.remove('d-none', 'alert-success', 'alert-danger');
+        fillCartFeedback.classList.add(isError ? 'alert-danger' : 'alert-success');
+        fillCartFeedback.textContent = message;
+    };
+
+    const parseResponseJson = async (res) => {
+        const text = await res.text();
+        if (!text) return null;
+        try {
+            return JSON.parse(text);
+        } catch (e) {
+            return { raw: text };
+        }
+    };
+
+    const applyComparisonSort = (comparisonBlock, order) => {
+        if (!comparisonBlock) return;
+        const tables = comparisonBlock.querySelectorAll('.smc-sortable-table');
+        tables.forEach((table) => {
+            const body = table.querySelector('tbody');
+            if (!body) return;
+            const rows = Array.from(body.querySelectorAll('tr'));
+            rows.sort((a, b) => {
+                const aPrice = parseFloat(a.dataset.sortPrice || '0') || 0;
+                const bPrice = parseFloat(b.dataset.sortPrice || '0') || 0;
+                return order === 'cheap' ? (aPrice - bPrice) : (bPrice - aPrice);
+            });
+            rows.forEach((row) => body.appendChild(row));
+        });
+    };
+
+    const setSortButtonState = (comparisonBlock, activeOrder) => {
+        if (!comparisonBlock) return;
+        comparisonBlock.querySelectorAll('.smc-sort-action').forEach((btn) => {
+            const order = (btn.dataset.sortOrder || '').toString();
+            const isActive = order === activeOrder;
+            btn.classList.toggle('btn-secondary', isActive);
+            btn.classList.toggle('btn-outline-secondary', !isActive);
+        });
+    };
+
+    const pollAgentJob = async (jobUuid) => {
+        if (!jobUuid) return;
+        try {
+            const res = await fetch(`{{ url('/supermarket-comparator/fill-cart/jobs') }}/${encodeURIComponent(jobUuid)}`, {
+                method: 'GET',
+                headers: {
+                    'Accept': 'application/json',
+                },
+            });
+            const payload = await parseResponseJson(res);
+            if (!res.ok) {
+                const message = payload && payload.message ? payload.message : 'No se pudo consultar el estado del job.';
+                setFillCartFeedback(message, true);
+                return;
+            }
+
+            const job = payload && payload.job ? payload.job : null;
+            if (!job) {
+                setFillCartFeedback('No se recibió información del job.', true);
+                return;
+            }
+
+            if (job.status === 'pending') {
+                setFillCartFeedback('En cola: esperando que el agente local tome el trabajo...', false);
+                fillCartPollTimer = setTimeout(() => pollAgentJob(jobUuid), 2500);
+                return;
+            }
+
+            if (job.status === 'in_progress') {
+                const progress = job.progress || {};
+                const current = progress.current || 0;
+                const total = progress.total || 0;
+                const title = progress.title || '';
+                const progressText = total > 0 ? `${current}/${total}` : 'procesando';
+                setFillCartFeedback(`Agente local en progreso (${progressText}) ${title}`.trim(), false);
+                fillCartPollTimer = setTimeout(() => pollAgentJob(jobUuid), 2500);
+                return;
+            }
+
+            if (job.status === 'completed') {
+                const result = job.result || {};
+                const addedList = Array.isArray(result.added) ? result.added : [];
+                const failedList = Array.isArray(result.failed) ? result.failed : [];
+                const added = addedList.length;
+                const failed = failedList.length;
+                let message = `Proceso terminado. Agregados: ${added}. Fallidos: ${failed}.`;
+                if (failedList.length) {
+                    const details = failedList.map((item) => {
+                        const title = (item.title || item.url || 'Producto').toString();
+                        const reason = (item.reason || 'Error').toString();
+                        return `${title}: ${reason}`;
+                    }).join(' | ');
+                    message = `${message} ${details}`;
+                }
+                setFillCartFeedback(message, failed > 0);
+                return;
+            }
+
+            if (job.status === 'failed') {
+                const reason = job.error_message || 'Error desconocido en agente local.';
+                setFillCartFeedback(`Proceso fallido: ${reason}`, true);
+                return;
+            }
+
+            setFillCartFeedback(`Estado de job no reconocido: ${job.status}`, true);
+        } catch (error) {
+            console.error(error);
+            setFillCartFeedback('No se pudo consultar el estado del agente local.', true);
+        }
+    };
+
     const showSaveFeedback = (container, message, isError) => {
         if (!container) return;
         let alert = container.querySelector('.smc-save-feedback');
@@ -931,6 +1165,17 @@ document.addEventListener('DOMContentLoaded', function () {
         alert.classList.add(isError ? 'alert-danger' : 'alert-success');
         alert.textContent = message;
     };
+
+    document.addEventListener('click', function (e) {
+        const sortBtn = e.target.closest('.smc-sort-action');
+        if (!sortBtn) return;
+        const comparisonBlock = sortBtn.closest('.smc-comparison-block');
+        const order = (sortBtn.dataset.sortOrder || '').toString();
+        if (!comparisonBlock || (order !== 'cheap' && order !== 'expensive')) return;
+        applyComparisonSort(comparisonBlock, order);
+        setSortButtonState(comparisonBlock, order);
+        refreshSelections();
+    });
 
     document.addEventListener('click', async function (e) {
         const btn = e.target.closest('.smc-save-purchase');
@@ -991,6 +1236,94 @@ document.addEventListener('DOMContentLoaded', function () {
             showSaveFeedback(summary, 'No se pudo guardar la compra. Intenta nuevamente.', true);
         } finally {
             btn.disabled = false;
+            if (typeof hideLoader === 'function') hideLoader();
+        }
+    });
+
+    document.addEventListener('click', async function (e) {
+        const openBtn = e.target.closest('.smc-fill-cart');
+        if (openBtn) {
+            const items = collectSelectedItems(resultsWrap || globalSummary);
+            if (!items.length) {
+                if (globalSummary) {
+                    showSaveFeedback(globalSummary, 'Selecciona al menos un producto para llenar el carrito.', true);
+                } else {
+                    alert('Selecciona al menos un producto para llenar el carrito.');
+                }
+                return;
+            }
+            openFillCartModal(items);
+            return;
+        }
+
+        if (e.target.closest('.smc-fill-cart-close') || e.target.closest('.smc-fill-cart-cancel')) {
+            closeFillCartModal();
+            return;
+        }
+
+        if (fillCartBackdrop && e.target === fillCartBackdrop) {
+            closeFillCartModal();
+            return;
+        }
+
+        const runBtn = e.target.closest('.smc-fill-cart-run');
+        if (!runBtn) return;
+        if (!fillCartStoreSelect) return;
+
+        const store = (fillCartStoreSelect.value || '').toString();
+        const deviceId = (fillCartDeviceInput?.value || '').trim();
+        const items = fillCartItems.filter((item) => (item.store || '').toString().toLowerCase() === store && item.url);
+        if (!items.length) {
+            setFillCartFeedback('No hay productos seleccionados para esa tienda.', true);
+            return;
+        }
+        if (!deviceId) {
+            setFillCartFeedback('Ingresa el device_id del agente local.', true);
+            return;
+        }
+        localStorage.setItem(fillCartDeviceStorageKey, deviceId);
+
+        try {
+            runBtn.disabled = true;
+            if (fillCartPollTimer) {
+                clearTimeout(fillCartPollTimer);
+                fillCartPollTimer = null;
+            }
+            setFillCartFeedback('Encolando trabajo para el agente local...', false);
+            if (typeof showLoader === 'function') showLoader();
+            const res = await fetch("{{ route('supermarket-comparator.fill-cart') }}", {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRF-TOKEN': csrfToken,
+                    'Accept': 'application/json',
+                },
+                body: JSON.stringify({
+                    store: store,
+                    device_id: deviceId,
+                    items: items,
+                }),
+            });
+            const payload = await parseResponseJson(res);
+            if (!res.ok) {
+                let message = 'No se pudo completar el llenado del carrito.';
+                if (payload && payload.message) message = payload.message;
+                if (payload && payload.error) message = `${message} (${payload.error})`;
+                if (payload && payload.raw) message = `${message} (${payload.raw})`;
+                throw new Error(message);
+            }
+            const data = payload || {};
+            const jobUuid = data && data.job ? data.job.uuid : null;
+            if (!jobUuid) {
+                throw new Error('No se recibió job UUID del backend.');
+            }
+            setFillCartFeedback(data.message || 'Trabajo encolado. Esperando al agente local...', false);
+            fillCartPollTimer = setTimeout(() => pollAgentJob(jobUuid), 1200);
+        } catch (error) {
+            console.error(error);
+            setFillCartFeedback(error.message || 'Error al llenar el carrito.', true);
+        } finally {
+            runBtn.disabled = false;
             if (typeof hideLoader === 'function') hideLoader();
         }
     });

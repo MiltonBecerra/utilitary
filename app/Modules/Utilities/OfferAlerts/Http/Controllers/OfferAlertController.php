@@ -8,6 +8,7 @@ use App\Models\OfferPriceHistory;
 use App\Models\Utility;
 use App\Modules\Utilities\OfferAlerts\Services\OfferPriceScraperService;
 use App\Modules\Core\Services\GuestService;
+use App\Modules\Core\Services\WhatsAppRegistryService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Str;
@@ -16,11 +17,17 @@ class OfferAlertController extends Controller
 {
     protected OfferPriceScraperService $scraper;
     protected GuestService $guestService;
+    protected WhatsAppRegistryService $whatsAppRegistryService;
 
-    public function __construct(OfferPriceScraperService $scraper, GuestService $guestService)
+    public function __construct(
+        OfferPriceScraperService $scraper,
+        GuestService $guestService,
+        WhatsAppRegistryService $whatsAppRegistryService
+    )
     {
         $this->scraper = $scraper;
         $this->guestService = $guestService;
+        $this->whatsAppRegistryService = $whatsAppRegistryService;
     }
 
     protected function utility(): ?Utility
@@ -64,7 +71,28 @@ class OfferAlertController extends Controller
         $utilityId = $utility?->id;
         $plan = Auth::check() ? Auth::user()->getActivePlan($utilityId) : $this->guestService->getGuestPlan($utilityId);
         $canUseWhatsApp = $plan === 'pro';
+        $canUseRecurring = in_array($plan, ['basic', 'pro'], true);
         $canUseRipley = $plan === 'pro';
+        $pendingRecurringAlerts = $alerts
+            ->filter(function (OfferAlert $alert) {
+                return $alert->frequency === 'recurring'
+                    && (bool) $alert->recurring_popup_pending
+                    && in_array($alert->status, ['active', 'fallback_email'], true);
+            })
+            ->map(function (OfferAlert $alert) {
+                return [
+                    'id' => $alert->id,
+                    'title' => $alert->title ?? 'Producto',
+                    'store' => $alert->store,
+                    'current_price' => $alert->current_price,
+                    'target_price' => $alert->target_price,
+                    'channel' => $alert->channel,
+                    'contact_email' => $alert->contact_email,
+                    'contact_phone' => $alert->contact_phone,
+                    'last_notified_at' => $alert->last_notified_at?->format('d/m/Y H:i'),
+                ];
+            })
+            ->values();
         $comments = $utility ? $utility->comments()->latest()->get() : collect();
         return view('modules.offer_alerts.index', compact(
             'alerts',
@@ -73,9 +101,11 @@ class OfferAlertController extends Controller
             'comments',
             'plan',
             'canUseWhatsApp',
+            'canUseRecurring',
             'canUseRipley',
             'lastPhone',
-            'lastEmail'
+            'lastEmail',
+            'pendingRecurringAlerts'
         ));
     }
 
@@ -95,6 +125,7 @@ class OfferAlertController extends Controller
             'url' => 'required|url',
             'target_price' => 'nullable|numeric',
             'notify_on_any_drop' => 'sometimes|boolean',
+            'frequency' => 'required|in:once,recurring',
             'price_type' => 'required|in:public,cmr',
             'channel' => 'nullable|in:email,whatsapp',
             'contact_email' => Auth::check()
@@ -107,6 +138,10 @@ class OfferAlertController extends Controller
             return back()
                 ->withErrors(['msg' => 'Debes aceptar los términos y la política de privacidad para continuar.'])
                 ->withInput();
+        }
+
+        if (($request->input('frequency') === 'recurring') && !in_array($plan, ['basic', 'pro'], true)) {
+            return $this->errorResponse($request, 'Alertas recurrentes disponibles en planes Basic o Pro.');
         }
 
         $store = $this->scraper->detectStore($request->url);
@@ -202,7 +237,9 @@ class OfferAlertController extends Controller
             'price_type' => $priceType,
             'target_price' => $request->target_price,
             'notify_on_any_drop' => $request->boolean('notify_on_any_drop'),
+            'frequency' => $request->input('frequency', 'once'),
             'status' => 'active',
+            'recurring_popup_pending' => false,
         ]);
 
         OfferPriceHistory::create([
@@ -210,6 +247,21 @@ class OfferAlertController extends Controller
             'price' => $alert->current_price,
             'checked_at' => now(),
         ]);
+
+        $registrationNotice = null;
+        if ($channel === 'whatsapp' && !empty($alert->contact_phone)) {
+            $result = $this->whatsAppRegistryService->registerIfFirst(
+                $alert->contact_phone,
+                $alert->user_id,
+                $alert->guest_id,
+                'offer-alert'
+            );
+
+            if (($result['is_first'] ?? false) && !empty($result['normalized_phone'])) {
+                $companyNumber = $this->whatsAppRegistryService->getCompanyNumber();
+                $registrationNotice = "Importante: para activar WhatsApp escribe primero al numero de la empresa {$companyNumber}.";
+            }
+        }
 
         $precioDetectado = $selectedPrice !== null ? number_format((float) $selectedPrice, 2) : null;
         $mensaje = 'Alerta creada.';
@@ -220,12 +272,15 @@ class OfferAlertController extends Controller
         if ($fallbackNotice) {
             $with['warning'] = $fallbackNotice;
         }
+        if ($registrationNotice) {
+            $with['warning'] = trim(($with['warning'] ?? '') . ' ' . $registrationNotice);
+        }
 
         if (Auth::check()) {
             return redirect()->route('offer-alerts.index')->with($with);
         }
 
-        return redirect()->route('offer-alerts.public.show', $alert->public_token)->with($with);
+        return redirect()->route('offer-alerts.index')->with($with);
     }
 
     protected function getFreeLimitError(string $store): ?string
@@ -326,6 +381,7 @@ class OfferAlertController extends Controller
             'target_price' => 'nullable|numeric',
             'notify_on_any_drop' => 'sometimes|boolean',
             'status' => 'nullable|in:active,inactive,triggered,fallback_email',
+            'frequency' => 'nullable|in:once,recurring',
             'channel' => 'nullable|in:email,whatsapp',
             'contact_email' => Auth::check()
                 ? 'nullable|email'
@@ -335,14 +391,25 @@ class OfferAlertController extends Controller
 
         $contactEmail = Auth::check() ? Auth::user()->email : $request->contact_email;
         $contactPhone = $channel === 'whatsapp' ? $request->contact_phone : null;
+        $frequency = $request->input('frequency', $offerAlert->frequency ?? 'once');
+
+        if ($frequency === 'recurring' && !in_array($plan, ['basic', 'pro'], true)) {
+            return $this->errorResponse($request, 'Alertas recurrentes disponibles en planes Basic o Pro.');
+        }
+
+        $nextStatus = $request->status ?? $offerAlert->status;
 
         $offerAlert->update([
             'target_price' => $request->target_price,
             'notify_on_any_drop' => $request->boolean('notify_on_any_drop'),
-            'status' => $request->status ?? $offerAlert->status,
+            'status' => $nextStatus,
             'channel' => $channel,
+            'frequency' => $frequency,
             'contact_email' => $contactEmail,
             'contact_phone' => $contactPhone,
+            'recurring_popup_pending' => in_array($nextStatus, ['active', 'fallback_email'], true)
+                ? $offerAlert->recurring_popup_pending
+                : false,
         ]);
 
         return back()->with('success', 'Alerta actualizada.');
@@ -363,6 +430,30 @@ class OfferAlertController extends Controller
         }
 
         return redirect()->route('offer-alerts.index')->with('success', 'Alerta eliminada.');
+    }
+
+    public function deactivate(Request $request, OfferAlert $offerAlert)
+    {
+        if (Auth::check()) {
+            abort_unless(Auth::id() === $offerAlert->user_id, 403);
+        } else {
+            $guestId = $this->guestService->getGuestId();
+            abort_unless($offerAlert->guest_id === $guestId, 403);
+        }
+
+        $offerAlert->update([
+            'status' => 'inactive',
+            'recurring_popup_pending' => false,
+        ]);
+
+        if ($request->expectsJson() || $request->wantsJson() || $request->ajax()) {
+            return response()->json([
+                'message' => 'Alerta desactivada.',
+                'alert_id' => $offerAlert->id,
+            ]);
+        }
+
+        return redirect()->route('offer-alerts.index')->with('success', 'Alerta desactivada.');
     }
 
     /**

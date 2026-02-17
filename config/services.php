@@ -48,6 +48,15 @@ return [
         'rate_limit_per_minute' => (int) env('SMC_RATE_LIMIT_PER_MINUTE', 12),
         'circuit_failure_threshold' => (int) env('SMC_CIRCUIT_FAILURE_THRESHOLD', 3),
         'circuit_cooldown_minutes' => (int) env('SMC_CIRCUIT_COOLDOWN_MINUTES', 10),
+
+        // Control de regla de términos genéricos en refinamiento.
+        'enable_generic_terms' => env('SMC_ENABLE_GENERIC_TERMS', false),
+
+        // Runtime local para ejecutar Playwright.
+        'node_bin' => env('SMC_NODE_BIN', 'node'),
+        'playwright_headless' => filter_var(env('SMC_PLAYWRIGHT_HEADLESS', false), FILTER_VALIDATE_BOOLEAN),
+        'playwright_keep_open' => filter_var(env('SMC_PLAYWRIGHT_KEEP_OPEN', true), FILTER_VALIDATE_BOOLEAN),
+        'agent_api_token' => env('SMC_AGENT_API_TOKEN', ''),
     ],
 
     'puppeteer' => [
@@ -55,5 +64,13 @@ return [
         'timeout' => env('PUPPETEER_TIMEOUT', 30),
         'enabled' => env('PUPPETEER_ENABLED', true),
         'api_key' => env('PUPPETEER_API_KEY', 'utilitary-secret-key-2024'),
+    ],
+
+    'whatsapp' => [
+        'company_number' => env('WHATSAPP_COMPANY_NUMBER', '+51999999999'),
+        'first_contact_message' => env(
+            'WHATSAPP_FIRST_CONTACT_MESSAGE',
+            'Hola, quiero registrar este numero para recibir alertas de Utilitary: :phone'
+        ),
     ],
 ];
